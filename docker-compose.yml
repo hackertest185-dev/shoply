@@ -42,7 +42,7 @@ services:
     environment:
       MONGO_URI:    mongodb://mongodb:27017
       REDIS_URL:    redis://redis:6379
-      ENVIRONMENT:  production
+      ENVIRONMENT:  development
       DEBUG:        "false"
       ENABLE_LEGACY_DELIVERY: "false"
       ENABLE_ONLINE_PAYMENTS: "false"
