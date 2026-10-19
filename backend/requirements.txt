@@ -34,4 +34,4 @@ Pillow==11.2.1             # decode and re-encode uploads, stripping metadata
 reportlab==4.4.4
 
 # ── Email ─────────────────────────────────────────────────
-sendgrid==6.11.0
+sendgrid==6.12.5
