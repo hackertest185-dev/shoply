@@ -126,8 +126,10 @@ const GlobalStyles = () => (
     .shop-hero-photo::after { content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none; background: linear-gradient(90deg, #102723 0%, rgba(16,39,35,.08) 45%, rgba(16,39,35,0) 100%); }
     .shop-hero-motion-hint { position: absolute; right: 30px; bottom: 28px; z-index: 2; display: inline-flex; align-items: center; gap: 9px; padding: 10px 13px; border: 1px solid rgba(246,220,174,.34); border-radius: 100px; background: rgba(9,25,23,.66); color: #f6dcae; font-size: 10px; font-weight: 800; letter-spacing: .16em; backdrop-filter: blur(12px); pointer-events: none; transition: opacity .3s ease, transform .3s ease; }
     .shop-hero-motion-hint::before { content: ''; width: 6px; height: 6px; border: 1px solid currentColor; border-radius: 50%; box-shadow: 0 0 0 3px rgba(246,220,174,.12); }
+    .shop-motion-mobile { display: none; }
     .shop-hero:hover .shop-hero-motion-hint { opacity: 0; transform: translateY(6px); }
     @keyframes heroDrift { from { transform: translate3d(0,0,0) scale(1.015); } to { transform: translate3d(-7px,-9px,0) scale(1.055); } }
+    .shop-hero-orbit, .shop-hero-depth-shadow, .shop-hero-float-chip { display: none; }
     .shop-hero-title { font-size: clamp(64px, 7vw, 104px) !important; line-height: .82 !important; letter-spacing: -.055em; }
     .shop-hero-title em { color: var(--amber-lt); }
     .shop-eyebrow { text-transform: uppercase; letter-spacing: .24em; color: var(--amber-lt); font-size: 11px; font-weight: 800; }
@@ -169,6 +171,7 @@ const GlobalStyles = () => (
       .shop-product-detail { grid-template-columns: 1fr; gap: 28px; }
     }
     @media (max-width: 700px) {
+      .shop-home { padding: 0 14px 80px !important; }
       .shop-header-inner { height: auto !important; min-height: 66px; flex-wrap: wrap; padding: 12px 16px !important; gap: 10px !important; }
       .shop-search { order: 3; flex-basis: 100%; max-width: none !important; }
       .shop-search input { height: 40px; }
@@ -180,13 +183,29 @@ const GlobalStyles = () => (
       .shop-mobile-menu { display: flex; flex-direction: column; gap: 3px; padding: 4px 16px 16px; background: var(--navy); border-top: 1px solid var(--navy-border); }
       .shop-mobile-menu button { min-height: 44px; padding: 10px 12px; text-align: left; border: 0; border-radius: 8px; background: transparent; color: var(--white); font: 600 14px var(--font-sans); cursor: pointer; }
       .shop-mobile-menu button:hover { background: var(--navy-card); color: var(--amber-lt); }
-      .shop-hero { display: block !important; min-height: 0 !important; margin: 18px 0 42px !important; }
-      .shop-hero-content { max-width: 100% !important; padding: 48px 26px 30px !important; }
-      .shop-hero-title { font-size: clamp(58px, 15vw, 84px) !important; }
-      .shop-hero-photo { position: relative; inset: auto; height: 270px; transform: none !important; will-change: auto; }
-      .shop-hero-photo-inner { inset: 0; }
-      .shop-hero-photo::after { background: linear-gradient(180deg, #102723, transparent 45%); }
-      .shop-hero-motion-hint { display: none; }
+      .shop-hero { display: flex !important; flex-direction: column; min-height: 0 !important; margin: 18px 0 42px !important; perspective: 900px; }
+      .shop-hero-content { max-width: 100% !important; width: 100%; padding: 22px 26px 34px !important; }
+      .shop-hero-title { font-size: clamp(55px, 13vw, 76px) !important; margin: 18px 0 20px !important; }
+      .shop-hero-photo { order: -1; position: relative; inset: auto; width: 100%; height: clamp(300px, 82vw, 390px); overflow: visible; transform: none !important; transform-style: flat; will-change: auto; touch-action: pan-y; background: radial-gradient(ellipse at 50% 55%, rgba(223,189,137,.24), transparent 58%), #102723; }
+      .shop-hero-photo::before { inset: 16px; z-index: 3; border-radius: 24px; background: radial-gradient(circle at var(--hero-glint-x, 70%) var(--hero-glint-y, 35%), rgba(255,239,204,.25), transparent 36%); mix-blend-mode: screen; }
+      .shop-hero-photo::after { inset: auto 0 0; height: 65px; z-index: 3; background: linear-gradient(0deg, #102723, transparent); }
+      .shop-hero-photo-inner { inset: 25px 32px 34px; z-index: 2; overflow: hidden; border: 1px solid rgba(244,218,177,.44); border-radius: 22px; box-shadow: 0 22px 42px rgba(0,0,0,.35), inset 0 0 0 1px rgba(255,255,255,.1); animation: heroMobileFloat 7s ease-in-out infinite alternate; transform-origin: center center; }
+      .shop-hero-photo-inner img { object-position: center 61%; animation: heroMobileZoom 10s ease-in-out infinite alternate; }
+      .shop-hero-photo.is-interacting .shop-hero-photo-inner { animation: none; transform: translate3d(var(--hero-x, 0px), var(--hero-y, 0px), 0) rotateX(var(--hero-rx, 0deg)) rotateY(var(--hero-ry, 0deg)); transition: transform .18s ease-out; }
+      .shop-hero-photo.is-interacting .shop-hero-photo-inner img { animation-play-state: paused; }
+      .shop-hero-orbit { display: block; position: absolute; z-index: 1; left: 6%; right: 6%; top: 19%; bottom: 11%; border: 1px solid rgba(246,220,174,.4); border-radius: 50%; transform: rotate(-24deg); animation: heroOrbit 9s ease-in-out infinite alternate; pointer-events: none; }
+      .shop-hero-orbit::after { content: ''; position: absolute; width: 9px; height: 9px; top: 12%; right: 12%; border-radius: 50%; background: #f6dcae; box-shadow: 0 0 0 7px rgba(246,220,174,.13), 0 0 24px rgba(246,220,174,.7); }
+      .shop-hero-depth-shadow { display: block; position: absolute; z-index: 0; left: 17%; right: 17%; bottom: 8px; height: 26px; border-radius: 50%; background: rgba(0,0,0,.5); filter: blur(14px); animation: heroShadow 7s ease-in-out infinite alternate; }
+      .shop-hero-float-chip { display: inline-flex; position: absolute; z-index: 4; right: 12px; top: 49px; padding: 10px 12px; border: 1px solid rgba(246,220,174,.55); border-radius: 100px; background: rgba(9,25,23,.84); box-shadow: 0 9px 24px rgba(0,0,0,.25); color: var(--amber-lt); font: 800 9px var(--font-sans); letter-spacing: .16em; animation: heroChipFloat 5s ease-in-out infinite alternate; pointer-events: none; }
+      .shop-hero-motion-hint { display: inline-flex; right: 17px; bottom: 43px; z-index: 4; padding: 8px 10px; font-size: 9px; letter-spacing: .1em; }
+      .shop-motion-desktop { display: none; }
+      .shop-motion-mobile { display: inline; }
+      .shop-hero:hover .shop-hero-motion-hint { opacity: 1; transform: none; }
+      @keyframes heroMobileFloat { from { transform: translate3d(0,5px,0) rotateX(2deg) rotateY(-5deg) rotateZ(-1deg); } to { transform: translate3d(0,-8px,0) rotateX(-2deg) rotateY(5deg) rotateZ(1deg); } }
+      @keyframes heroMobileZoom { from { transform: scale(1.08) translateX(-1%); } to { transform: scale(1.17) translateX(1%); } }
+      @keyframes heroOrbit { from { transform: rotate(-25deg) scale(.98); opacity: .6; } to { transform: rotate(-19deg) scale(1.04); opacity: 1; } }
+      @keyframes heroShadow { from { transform: scale(1.07); opacity: .7; } to { transform: scale(.86); opacity: .4; } }
+      @keyframes heroChipFloat { from { transform: translateY(0); } to { transform: translateY(-8px); } }
       .shop-category-grid { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
       .shop-category-tile { min-height: 150px; padding: 18px !important; }
       .shop-trust-grid { grid-template-columns: repeat(2,minmax(0,1fr)) !important; }
@@ -204,6 +223,7 @@ const GlobalStyles = () => (
     @media (prefers-reduced-motion: reduce) {
       *,*::before,*::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
       .shop-hero-photo { transform: none !important; will-change: auto; }
+      .shop-hero-photo-inner, .shop-hero-photo-inner img, .shop-hero-orbit, .shop-hero-depth-shadow, .shop-hero-float-chip { animation: none !important; transform: none !important; }
       .shop-hero-motion-hint { display: none; }
       [data-reveal] { opacity: 1 !important; transform: none !important; }
     }
@@ -1336,22 +1356,36 @@ function HomePage({ state, dispatch, onAddToCart }) {
   const [loadingHome, setLoadingHome] = useState(true);
   const heroPhotoRef = useRef(null);
   const heroFrameRef = useRef(0);
+  const heroTouchStartRef = useRef(null);
 
   useEffect(() => () => window.cancelAnimationFrame(heroFrameRef.current), []);
 
+  const startHeroTouch = event => {
+    if (event.pointerType === "touch") heroTouchStartRef.current = { x: event.clientX, y: event.clientY };
+  };
+
   const moveHero = event => {
-    if (event.pointerType !== "mouse" || window.innerWidth <= 700 || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     const photo = heroPhotoRef.current;
     if (!photo) return;
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const x = Math.max(-1, Math.min(1, ((event.clientX - bounds.left) / bounds.width - .5) * 2));
-    const y = Math.max(-1, Math.min(1, ((event.clientY - bounds.top) / bounds.height - .5) * 2));
+    let x;
+    let y;
+    if (event.pointerType === "touch" && window.innerWidth <= 700 && heroTouchStartRef.current) {
+      x = Math.max(-1, Math.min(1, (event.clientX - heroTouchStartRef.current.x) / 70));
+      y = Math.max(-1, Math.min(1, (event.clientY - heroTouchStartRef.current.y) / 90));
+      if (Math.abs(x) < .1 && Math.abs(y) < .1) return;
+      photo.classList.add("is-interacting");
+    } else if (event.pointerType === "mouse" && window.innerWidth > 700) {
+      const bounds = event.currentTarget.getBoundingClientRect();
+      x = Math.max(-1, Math.min(1, ((event.clientX - bounds.left) / bounds.width - .5) * 2));
+      y = Math.max(-1, Math.min(1, ((event.clientY - bounds.top) / bounds.height - .5) * 2));
+    } else return;
     window.cancelAnimationFrame(heroFrameRef.current);
     heroFrameRef.current = window.requestAnimationFrame(() => {
-      photo.style.setProperty("--hero-x", `${x * 10}px`);
-      photo.style.setProperty("--hero-y", `${y * 8}px`);
+      photo.style.setProperty("--hero-x", `${x * 9}px`);
+      photo.style.setProperty("--hero-y", `${y * 7}px`);
       photo.style.setProperty("--hero-rx", `${-y * 5}deg`);
-      photo.style.setProperty("--hero-ry", `${x * 7}deg`);
+      photo.style.setProperty("--hero-ry", `${x * 8}deg`);
       photo.style.setProperty("--hero-glint-x", `${70 + x * 17}%`);
       photo.style.setProperty("--hero-glint-y", `${35 + y * 17}%`);
     });
@@ -1359,8 +1393,10 @@ function HomePage({ state, dispatch, onAddToCart }) {
 
   const resetHero = () => {
     window.cancelAnimationFrame(heroFrameRef.current);
+    heroTouchStartRef.current = null;
     const photo = heroPhotoRef.current;
     if (!photo) return;
+    photo.classList.remove("is-interacting");
     for (const key of ["--hero-x", "--hero-y", "--hero-rx", "--hero-ry", "--hero-glint-x", "--hero-glint-y"]) photo.style.removeProperty(key);
   };
 
@@ -1388,9 +1424,9 @@ function HomePage({ state, dispatch, onAddToCart }) {
   }, [state.auth.isAuthenticated]);
 
   return (
-    <main style={{ maxWidth: "1280px", margin: "0 auto", padding: "0 24px 80px" }}>
+    <main className="shop-home" style={{ maxWidth: "1280px", margin: "0 auto", padding: "0 24px 80px" }}>
       {/* Hero */}
-      <section className="shop-hero" onPointerMove={moveHero} onPointerLeave={resetHero} style={{
+      <section className="shop-hero" onPointerMove={moveHero} onPointerLeave={resetHero} onPointerUp={resetHero} onPointerCancel={resetHero} style={{
         position: "relative", borderRadius: "var(--radius)", overflow: "hidden",
         background: "var(--navy-mid)",
         border: "1px solid var(--navy-border)", margin: "28px 0 72px",
@@ -1415,11 +1451,14 @@ function HomePage({ state, dispatch, onAddToCart }) {
           </div>
           <div className="fade-in-up-d3" style={{ borderTop: "1px solid rgba(223,189,137,.3)", marginTop: 55, paddingTop: 16, maxWidth: 430, color: "var(--muted)", fontSize: 12, letterSpacing: ".03em" }}>CURATED BY THE STORE · ORDER VIA WHATSAPP</div>
         </div>
-        <div className="shop-hero-photo" ref={heroPhotoRef} aria-hidden="true">
+        <div className="shop-hero-photo" ref={heroPhotoRef} onPointerDown={startHeroTouch} aria-hidden="true">
+          <span className="shop-hero-orbit" />
+          <span className="shop-hero-depth-shadow" />
           <div className="shop-hero-photo-inner">
             <img src="/shoply-editorial-hero.webp" alt="" width="1024" height="1536" fetchPriority="high" />
           </div>
-          <span className="shop-hero-motion-hint">MOVE TO EXPLORE</span>
+          <span className="shop-hero-float-chip">THE SHOPLY EDIT</span>
+          <span className="shop-hero-motion-hint"><span className="shop-motion-desktop">MOVE TO EXPLORE</span><span className="shop-motion-mobile">SWIPE TO EXPLORE</span></span>
         </div>
       </section>
 
