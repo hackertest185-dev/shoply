@@ -44,6 +44,7 @@ services:
       REDIS_URL:    redis://redis:6379
       ENVIRONMENT:  development
       DEBUG:        "false"
+      FRONTEND_URL: http://localhost
       ENABLE_LEGACY_DELIVERY: "false"
       ENABLE_ONLINE_PAYMENTS: "false"
     ports: ['8000:8000']
