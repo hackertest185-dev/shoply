@@ -81,13 +81,35 @@ app.add_middleware(
 # ── Security headers middleware ────────────────────────────────────────────────
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.url.path in {
+        f"{PREFIX}/auth/refresh",
+        f"{PREFIX}/auth/logout",
+    } and request.cookies.get("refresh_token"):
+        origin = request.headers.get("origin")
+        referer = request.headers.get("referer")
+        trusted = set(settings.ALLOWED_ORIGINS)
+        if origin not in trusted and not any(referer and referer.startswith(item) for item in trusted):
+            return JSONResponse(
+                status_code=403,
+                content={"success": False, "error": {"code": "CSRF_BLOCKED", "message": "Request origin is not trusted."}},
+            )
+    content_length = request.headers.get("content-length")
+    if content_length and content_length.isdigit() and int(content_length) > 12 * 1024 * 1024:
+        return JSONResponse(
+            status_code=413,
+            content={"success": False, "error": {"code": "REQUEST_TOO_LARGE", "message": "Request body is too large."}},
+        )
     request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
     response = await call_next(request)
     response.headers["X-Request-ID"]           = request_id
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"]        = "DENY"
-    response.headers["Referrer-Policy"]        = "strict-origin-when-cross-origin"
-    response.headers["Permissions-Policy"]     = "camera=(), microphone=(), geolocation=(), payment=(self)"
+    response.headers["Referrer-Policy"]        = "no-referrer"
+    response.headers["Permissions-Policy"]     = "camera=(), microphone=(), geolocation=(), payment=()"
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+    if request.url.path.startswith(f"{PREFIX}/auth/"):
+        response.headers["Cache-Control"] = "no-store"
     if not settings.DEBUG:
         response.headers["Strict-Transport-Security"] = (
             "max-age=31536000; includeSubDomains; preload"

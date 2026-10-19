@@ -11,6 +11,10 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 SAFE_PROJECTION = {
     "password_hash": 0,
     "failed_login_count": 0,
+    "account_locked_until": 0,
+    "verification_token": 0,
+    "verification_token_expires": 0,
+    "auth_version": 0,
     "__v": 0,
 }
 
@@ -34,6 +38,8 @@ async def find_by_email(db: AsyncIOMotorDatabase, email: str) -> dict | None:
 
 async def find_by_id(db: AsyncIOMotorDatabase, user_id: str) -> dict | None:
     """Find user by ID with safe projection (no password_hash)."""
+    if not ObjectId.is_valid(user_id):
+        return None
     doc = await db.users.find_one(
         {"_id": ObjectId(user_id)},
         SAFE_PROJECTION,
@@ -48,6 +54,7 @@ async def insert_user(db: AsyncIOMotorDatabase, data: dict) -> str:
     data["updated_at"] = now
     data["failed_login_count"] = 0
     data["account_locked_until"] = None
+    data.setdefault("auth_version", 1)
     result = await db.users.insert_one(data)
     return str(result.inserted_id)
 
@@ -77,3 +84,14 @@ async def reset_failed_logins(db: AsyncIOMotorDatabase, user_id: str) -> None:
         {"_id": ObjectId(user_id)},
         {"$set": {"failed_login_count": 0, "account_locked_until": None}},
     )
+
+
+async def bump_auth_version(db: AsyncIOMotorDatabase, user_id: str) -> int:
+    """Invalidate all previously issued access tokens for a user."""
+    result = await db.users.find_one_and_update(
+        {"_id": ObjectId(user_id)},
+        {"$inc": {"auth_version": 1}, "$set": {"updated_at": datetime.now(timezone.utc)}},
+        return_document=True,
+        projection={"auth_version": 1},
+    )
+    return int((result or {}).get("auth_version", 1))

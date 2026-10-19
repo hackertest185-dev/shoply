@@ -114,6 +114,7 @@ export const api = {
   auth: {
     register:       (data)         => apiClient.post('/auth/register', data),
     login:          (data)         => apiClient.post('/auth/login', data),
+    verifyAdminMfa:  (data)         => apiClient.post('/auth/admin/verify-mfa', data),
     logout:         ()             => apiClient.post('/auth/logout'),
     refresh:        ()             => silentRefresh(), // 👈 ربط الدالة بمسار الـ Refresh
     me:             ()             => apiClient.get('/auth/me'),
@@ -162,7 +163,6 @@ export const api = {
   admin: {
     dashboard:      ()             => apiClient.get('/admin/dashboard'),
     users:          (params)       => apiClient.get('/admin/users', { params }),
-    updateUser:     (id, data)     => apiClient.patch(`/admin/users/${id}`, data),
     approveProduct: (id)           => apiClient.patch(`/admin/products/${id}/approve`),
     rejectProduct:  (id, data)     => apiClient.patch(`/admin/products/${id}/reject`, data),
     pendingProducts: (params)      => apiClient.get('/admin/products/pending', { params }),

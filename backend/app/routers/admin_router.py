@@ -6,7 +6,7 @@ from pymongo import ReturnDocument
 
 from app.core.database import get_db
 from app.dependencies.rbac_dependency import require_admin
-from app.schemas.admin_schema import CompleteDeliveryRequest, ProductRejectRequest, RefundRequest, UserStatusUpdate, OrderAssignRequest
+from app.schemas.admin_schema import CompleteDeliveryRequest, ProductRejectRequest, RefundRequest, OrderAssignRequest
 from app.schemas.delivery_schema import AgentRejectRequest
 from app.services import admin_service, verification_service
 from app.services.audit_log_service import write_audit_log
@@ -307,30 +307,22 @@ async def list_users(
     if role:
         query["role"] = {"$eq": role}
     skip   = (page - 1) * limit
-    cursor = db.users.find(query, {"password_hash": 0}).skip(skip).limit(limit)
+    cursor = db.users.find(
+        query,
+        {
+            "password_hash": 0,
+            "failed_login_count": 0,
+            "account_locked_until": 0,
+            "verification_token": 0,
+            "verification_token_expires": 0,
+            "auth_version": 0,
+        },
+    ).skip(skip).limit(limit)
     docs   = await cursor.to_list(limit)
     total  = await db.users.count_documents(query)
     for doc in docs:
         doc["id"] = str(doc.pop("_id"))
     return _ok(docs, {"page": page, "total": total})
-
-
-@router.patch("/users/{user_id}")
-async def update_user_status(
-    user_id: str,
-    body: UserStatusUpdate,
-    request: Request,
-    current_user: dict = Depends(require_admin),
-    db=Depends(get_db),
-):
-    from app.models import user_model
-    await user_model.update_user(db, user_id, {"status": body.status})
-    await write_audit_log(
-        db, current_user["user_id"], "admin", "user_status_changed",
-        "users", user_id, {"status": body.status},
-        request.client.host if request.client else None,
-    )
-    return _ok({"message": "User status updated."})
 
 
 @router.patch("/products/{product_id}/approve")
@@ -403,7 +395,17 @@ async def list_delivery_agents(
     if verification_status and verification_status != "all":
         query["verification_status"] = {"$eq": verification_status}
     skip   = (page - 1) * limit
-    cursor = db.users.find(query, {"password_hash": 0}).skip(skip).limit(limit)
+    cursor = db.users.find(
+        query,
+        {
+            "password_hash": 0,
+            "failed_login_count": 0,
+            "account_locked_until": 0,
+            "verification_token": 0,
+            "verification_token_expires": 0,
+            "auth_version": 0,
+        },
+    ).skip(skip).limit(limit)
     docs   = await cursor.to_list(limit)
     total  = await db.users.count_documents(query)
     for doc in docs:

@@ -31,3 +31,15 @@ services:
         sync: false
       - key: EMAIL_FROM_NAME
         value: Shoply
+      - key: ADMIN_MFA_REQUIRED
+        value: "true"
+      - key: ADMIN_MFA_TTL_SECONDS
+        value: "300"
+      - key: ADMIN_MFA_MAX_ATTEMPTS
+        value: "5"
+      - key: ADMIN_ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "10"
+      - key: ADMIN_REFRESH_TOKEN_EXPIRE_DAYS
+        value: "1"
+      - key: PASSWORD_MIN_LENGTH
+        value: "12"

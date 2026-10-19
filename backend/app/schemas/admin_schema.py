@@ -8,11 +8,6 @@ class ProductRejectRequest(BaseModel):
     reason: str = Field(..., min_length=5, max_length=500)
 
 
-class UserStatusUpdate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    status: str  # active | suspended | deleted
-
-
 class RefundRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     amount_cents: int = Field(..., ge=1)

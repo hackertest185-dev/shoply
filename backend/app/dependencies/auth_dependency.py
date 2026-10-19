@@ -52,7 +52,7 @@ async def get_current_user(
 
     user = await db.users.find_one(
         {"_id": ObjectId(user_id)},
-        {"email": 1, "role": 1, "status": 1, "is_verified": 1},
+        {"email": 1, "role": 1, "status": 1, "is_verified": 1, "auth_version": 1},
     )
     if not user or user.get("status", "active") != "active" or user.get("is_verified") is False:
         raise HTTPException(
@@ -61,9 +61,29 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    try:
+        token_version = int(payload.get("auth_version", 1))
+        user_version = int(user.get("auth_version", 1))
+    except (TypeError, ValueError):
+        token_version = user_version = -1
+    if token_version != user_version:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "TOKEN_INVALID", "message": "Session is no longer valid."},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if user.get("role") == "admin" and "email_otp" not in (payload.get("amr") or []):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "MFA_REQUIRED", "message": "Admin verification is required."},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     return {
         "user_id": user_id,
         "email": user.get("email"),
         "role": user.get("role"),
         "jti": payload.get("jti"),
+        "auth_version": int(user.get("auth_version", 1)),
+        "amr": payload.get("amr") or [],
     }

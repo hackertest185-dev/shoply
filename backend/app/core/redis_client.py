@@ -47,6 +47,13 @@ EMAIL_OTP_KEY_PREFIX = "email_otp:"
 EMAIL_OTP_ATTEMPTS_KEY_PREFIX = "email_otp_attempts:"
 EMAIL_OTP_LOCK_KEY_PREFIX = "email_otp_lock:"
 PASSWORD_RESET_KEY_PREFIX = "password_reset:"
+ADMIN_MFA_KEY_PREFIX = "admin_mfa:"
+ADMIN_MFA_ATTEMPTS_KEY_PREFIX = "admin_mfa_attempts:"
+
+
+def _email_key(email: str) -> str:
+    """Use a deterministic hash so raw email addresses never become Redis keys."""
+    return hashlib.sha256(email.lower().strip().encode()).hexdigest()
 
 
 async def store_otp(order_id: str, otp_plaintext: str) -> None:
@@ -111,7 +118,7 @@ async def delete_otp(order_id: str) -> None:
 async def store_email_otp(email: str, otp_plaintext: str) -> None:
     """Store a hashed email OTP; the plaintext never enters Redis."""
     redis = get_redis()
-    key = email.lower().strip()
+    key = _email_key(email)
     otp_hash = bcrypt.hashpw(otp_plaintext.encode(), bcrypt.gensalt(rounds=10)).decode()
     await redis.set(f"{EMAIL_OTP_KEY_PREFIX}{key}", otp_hash, ex=settings.EMAIL_OTP_TTL_SECONDS)
     await redis.delete(f"{EMAIL_OTP_ATTEMPTS_KEY_PREFIX}{key}")
@@ -120,7 +127,7 @@ async def store_email_otp(email: str, otp_plaintext: str) -> None:
 
 async def verify_email_otp(email: str, submitted: str) -> dict[str, Any]:
     redis = get_redis()
-    key = email.lower().strip()
+    key = _email_key(email)
     if await redis.exists(f"{EMAIL_OTP_LOCK_KEY_PREFIX}{key}"):
         return {"valid": False, "locked": True, "attempts_remaining": 0}
     stored_hash = await redis.get(f"{EMAIL_OTP_KEY_PREFIX}{key}")
@@ -143,7 +150,7 @@ async def verify_email_otp(email: str, submitted: str) -> dict[str, Any]:
 
 async def delete_email_otp(email: str) -> None:
     redis = get_redis()
-    key = email.lower().strip()
+    key = _email_key(email)
     await redis.delete(f"{EMAIL_OTP_KEY_PREFIX}{key}")
     await redis.delete(f"{EMAIL_OTP_ATTEMPTS_KEY_PREFIX}{key}")
     await redis.delete(f"{EMAIL_OTP_LOCK_KEY_PREFIX}{key}")
@@ -163,6 +170,47 @@ async def consume_password_reset_token(token: str) -> str | None:
     if value:
         await redis.delete(key)
     return value
+
+
+async def store_admin_mfa_challenge(
+    challenge_id: str,
+    user_id: str,
+    otp_plaintext: str,
+    ip_hash: str,
+    ttl: int,
+) -> None:
+    """Store only a bcrypt OTP hash and minimal challenge metadata."""
+    redis = get_redis()
+    key = f"{ADMIN_MFA_KEY_PREFIX}{hashlib.sha256(challenge_id.encode()).hexdigest()}"
+    otp_hash = bcrypt.hashpw(otp_plaintext.encode(), bcrypt.gensalt(rounds=10)).decode()
+    await redis.hset(key, mapping={"user_id": user_id, "otp_hash": otp_hash, "ip_hash": ip_hash})
+    await redis.expire(key, ttl)
+    await redis.delete(f"{ADMIN_MFA_ATTEMPTS_KEY_PREFIX}{hashlib.sha256(challenge_id.encode()).hexdigest()}")
+
+
+async def verify_admin_mfa_challenge(
+    challenge_id: str,
+    submitted: str,
+    max_attempts: int,
+    ttl: int,
+) -> dict[str, Any]:
+    redis = get_redis()
+    digest = hashlib.sha256(challenge_id.encode()).hexdigest()
+    key = f"{ADMIN_MFA_KEY_PREFIX}{digest}"
+    attempts_key = f"{ADMIN_MFA_ATTEMPTS_KEY_PREFIX}{digest}"
+    challenge = await redis.hgetall(key)
+    if not challenge:
+        return {"valid": False, "expired": True, "locked": False}
+    if bcrypt.checkpw(submitted.encode(), challenge["otp_hash"].encode()):
+        await redis.delete(key, attempts_key)
+        return {"valid": True, "user_id": challenge["user_id"]}
+    attempts = await redis.incr(attempts_key)
+    await redis.expire(attempts_key, ttl)
+    remaining = max(0, max_attempts - attempts)
+    if attempts >= max_attempts:
+        await redis.delete(key)
+        return {"valid": False, "locked": True, "attempts_remaining": 0, "user_id": challenge.get("user_id")}
+    return {"valid": False, "locked": False, "attempts_remaining": remaining, "user_id": challenge.get("user_id")}
 
 
 # ── Generic cache helpers ─────────────────────────────────────────────────────

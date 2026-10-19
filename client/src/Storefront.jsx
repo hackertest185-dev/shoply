@@ -315,6 +315,7 @@ const api = {
   auth: {
     register:       (body)  => apiFetch("/auth/register",       { method: "POST", body }),
     login:          (body)  => apiFetch("/auth/login",          { method: "POST", body }),
+    verifyAdminMfa: (body)  => apiFetch("/auth/admin/verify-mfa", { method: "POST", body }),
     requestEmailOtp: (body) => apiFetch("/auth/email/request-otp", { method: "POST", body }),
     verifyEmailOtp:  (body) => apiFetch("/auth/email/verify-otp",  { method: "POST", body }),
     logout:         ()      => apiFetch("/auth/logout",         { method: "POST" }),
@@ -822,6 +823,8 @@ function AuthModal({ state, dispatch }) {
   const [mode, setMode] = useState(ui.authModal || "login");
   const [method, setMethod] = useState("password");
   const [otpStep, setOtpStep] = useState(false);
+  const [adminMfaStep, setAdminMfaStep] = useState(false);
+  const [adminChallengeId, setAdminChallengeId] = useState("");
   const [otp, setOtp] = useState("");
   const [form, setForm] = useState({ name: "", email: "", password: "", role: "customer" });
   const [errors, setErrors] = useState({});
@@ -833,6 +836,8 @@ function AuthModal({ state, dispatch }) {
     setMode(ui.authModal || "login");
     setMethod("password");
     setOtpStep(false);
+    setAdminMfaStep(false);
+    setAdminChallengeId("");
     setOtp("");
     setErrors({});
     setServerError("");
@@ -855,6 +860,13 @@ function AuthModal({ state, dispatch }) {
       setServerError(res.error?.message || "Something went wrong. Please try again.");
       return false;
     }
+    if (res.data?.mfa_required) {
+      setAdminMfaStep(true);
+      setAdminChallengeId(res.data.challenge_id);
+      setOtp("");
+      setServerError("A verification code was sent to the admin email.");
+      return false;
+    }
     const { access_token, user } = res.data;
     setAccessToken(access_token);
     dispatch({ type: "AUTH_LOADED", token: access_token, user });
@@ -872,7 +884,7 @@ function AuthModal({ state, dispatch }) {
     const identityErrors = {};
     if (!form.email.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) identityErrors.email = "Invalid email format";
     if (mode === "register" && form.name.trim().length < 2) identityErrors.name = "Name must be at least 2 characters";
-    if (form.password.length < 8) identityErrors.password = "Password must be at least 8 characters";
+    if (form.password.length < 12) identityErrors.password = "Password must be at least 12 characters";
     if (form.password.length > 72) identityErrors.password = "Password must be at most 72 characters";
     setErrors(identityErrors);
     if (Object.keys(identityErrors).length) return;
@@ -886,6 +898,20 @@ function AuthModal({ state, dispatch }) {
         close();
         return;
       }
+      finishLogin(res);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAdminMfa = async () => {
+    if (!/^\d{6}$/.test(otp)) {
+      setServerError("Enter the 6-digit code sent to the admin email.");
+      return;
+    }
+    setLoading(true); setServerError("");
+    try {
+      const res = await api.auth.verifyAdminMfa({ challenge_id: adminChallengeId, otp });
       finishLogin(res);
     } finally {
       setLoading(false);
@@ -935,6 +961,8 @@ function AuthModal({ state, dispatch }) {
     setMode(nextMode);
     setMethod("password");
     setOtpStep(false);
+    setAdminMfaStep(false);
+    setAdminChallengeId("");
     setOtp("");
     setErrors({});
     setServerError("");
@@ -969,7 +997,15 @@ function AuthModal({ state, dispatch }) {
         {!forgotMode && mode === "register" && (
           <Input label="Full Name" value={form.name} onChange={e => updateForm("name", e.target.value)} placeholder="Jane Smith" error={errors.name} required />
         )}
-        {!forgotMode && <Input label="Email" type="email" value={form.email} onChange={e => updateForm("email", e.target.value)} placeholder="you@example.com" error={errors.email} required disabled={otpStep} />}
+        {!forgotMode && !adminMfaStep && <Input label="Email" type="email" value={form.email} onChange={e => updateForm("email", e.target.value)} placeholder="you@example.com" error={errors.email} required disabled={otpStep} />}
+
+        {!forgotMode && adminMfaStep && <>
+          <h2 style={{ fontFamily: "var(--font-serif)", fontSize: 24, margin: 0 }}>Admin verification</h2>
+          <p style={{ color: "var(--muted)", fontSize: 13, lineHeight: 1.5 }}>Enter the one-time code sent after your password was verified. The code expires in 5 minutes.</p>
+          <Input label="Admin verification code" value={otp} onChange={e => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="123456" inputMode="numeric" autoComplete="one-time-code" />
+          <Btn full size="lg" onClick={handleAdminMfa} disabled={loading || otp.length !== 6}>{loading ? <Spinner size={18} color="#0a0f1e" /> : "Verify admin access"}</Btn>
+          <button onClick={() => { setAdminMfaStep(false); setAdminChallengeId(""); setOtp(""); setServerError(""); }} style={{ background: "none", border: "none", color: "var(--muted)", fontSize: 13, cursor: "pointer", textDecoration: "underline" }}>Start over</button>
+        </>}
 
         {forgotMode && <>
           <h2 style={{ fontFamily: "var(--font-serif)", fontSize: 24, margin: 0 }}>Reset your password</h2>
@@ -979,9 +1015,9 @@ function AuthModal({ state, dispatch }) {
           <button onClick={() => setForgotMode(false)} style={{ background: "none", border: "none", color: "var(--muted)", fontSize: 13, cursor: "pointer", textDecoration: "underline" }}>Back to sign in</button>
         </>}
 
-        {!forgotMode && method === "password" && (
+        {!forgotMode && !adminMfaStep && method === "password" && (
           <>
-            <Input label="Password" type="password" value={form.password} onChange={e => updateForm("password", e.target.value)} placeholder={mode === "login" ? "Your password" : "Min 8 characters"} error={errors.password} required />
+            <Input label="Password" type="password" value={form.password} onChange={e => updateForm("password", e.target.value)} placeholder={mode === "login" ? "Your password" : "Min 12 characters"} error={errors.password} required />
             <Btn full size="lg" onClick={handlePasswordSubmit} disabled={loading}>
               {loading ? <Spinner size={18} color="#0a0f1e" /> : (mode === "login" ? "Sign In" : "Create Account")}
             </Btn>
@@ -992,7 +1028,7 @@ function AuthModal({ state, dispatch }) {
           </>
         )}
 
-        {!forgotMode && method === "otp" && !otpStep && (
+        {!forgotMode && !adminMfaStep && method === "otp" && !otpStep && (
           <>
             <p style={{ fontSize: "13px", color: "var(--muted)", lineHeight: 1.5, margin: 0 }}>
               We will send a 6-digit verification code to your email. No password is needed.
@@ -1006,7 +1042,7 @@ function AuthModal({ state, dispatch }) {
           </>
         )}
 
-        {!forgotMode && method === "otp" && otpStep && (
+        {!forgotMode && !adminMfaStep && method === "otp" && otpStep && (
           <>
             <p style={{ fontSize: "13px", color: "var(--muted)", lineHeight: 1.5, margin: 0 }}>
               Enter the 6-digit code sent to <strong style={{ color: "var(--white)" }}>{form.email}</strong>.
@@ -2452,13 +2488,15 @@ function AdminDashboard({ dispatch }) {
 }
 
 function ResetPasswordPage({ dispatch }) {
-  const token = new URLSearchParams(window.location.search).get("reset_token") || "";
+  const token = new URLSearchParams(window.location.search).get("reset_token")
+    || new URLSearchParams(window.location.hash.replace(/^#/, "")).get("reset_token")
+    || "";
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const submit = async () => {
-    if (password.length < 8 || password !== confirm) { setMessage("Use at least 8 characters and make both passwords match."); return; }
+    if (password.length < 12 || password !== confirm) { setMessage("Use at least 12 characters and make both passwords match."); return; }
     setLoading(true); setMessage("");
     const res = await api.auth.resetPassword({ token, new_password: password });
     setLoading(false);
@@ -2496,7 +2534,12 @@ export default function Storefront() {
   const reduxDispatch = useReduxDispatch();
 
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).has("reset_token")) dispatch({ type: "NAVIGATE", page: "resetPassword" });
+    const resetParams = new URLSearchParams(window.location.search);
+    const resetHash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    if (resetParams.has("reset_token") || resetHash.has("reset_token")) {
+      dispatch({ type: "NAVIGATE", page: "resetPassword" });
+      if (resetParams.has("reset_token")) window.history.replaceState({}, "", `${window.location.pathname}${window.location.hash}`);
+    }
     window.scrollTo({ top: 0, behavior: "auto" });
     const sections = document.querySelectorAll("[data-reveal]");
     if (!('IntersectionObserver' in window) || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {

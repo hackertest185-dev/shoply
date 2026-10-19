@@ -6,6 +6,7 @@ Rate limits applied via slowapi decorators on each route.
 import uuid
 import secrets
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
+from bson import ObjectId
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -24,6 +25,7 @@ from app.schemas.auth_schema import (
     EmailOtpVerifyRequest,
     VerifyAccountRequest,
     ResetPasswordRequest,
+    AdminMFAVerifyRequest,
 )
 from app.models import user_model
 from app.services import auth_service
@@ -122,6 +124,8 @@ async def request_email_otp(
             raise HTTPException(status_code=409, detail=_error("CONFLICT", "An account with this email already exists. Sign in instead."))
     elif not existing:
         raise HTTPException(status_code=404, detail=_error("ACCOUNT_NOT_FOUND", "No account uses this email. Choose Create Account first."))
+    elif existing.get("role") == "admin":
+        raise HTTPException(status_code=400, detail=_error("PASSWORD_REQUIRED", "Use password sign-in for this account."))
 
     otp = str(secrets.randbelow(1_000_000)).zfill(6)
     await store_email_otp(email, otp)
@@ -194,19 +198,52 @@ async def login(
                 status_code=423,
                 detail=_error("ACCOUNT_LOCKED", "Account temporarily locked. Please try again later."),
             )
+        if code in {"MFA_UNAVAILABLE", "MFA_DELIVERY_FAILED"}:
+            raise HTTPException(status_code=503, detail=_error("MFA_UNAVAILABLE", "Admin verification is temporarily unavailable."))
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=_error("INVALID_CREDENTIALS", "Invalid email or password."),
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    if result.get("mfa_required"):
+        return _success({
+            "mfa_required": True,
+            "challenge_id": result["challenge_id"],
+            "expires_in": result["expires_in"],
+            "user": result["user"],
+        })
     _set_refresh_cookie(response, result["refresh_token_plain"])
-
     return _success({
         "access_token": result["access_token"],
         "token_type":   "bearer",
-        "expires_in":   900,
+        "expires_in":   result["expires_in"],
         "user":         result["user"],
+    })
+
+
+@router.post("/admin/verify-mfa")
+@limiter.limit("10/15minute")
+async def verify_admin_mfa(
+    request: Request,
+    body: AdminMFAVerifyRequest,
+    response: Response,
+    db=Depends(get_db),
+):
+    ip = request.client.host if request.client else "unknown"
+    try:
+        result = await auth_service.verify_admin_mfa(db, body.challenge_id, body.otp, ip)
+    except ValueError as exc:
+        code = str(exc)
+        if code == "MFA_LOCKED":
+            raise HTTPException(status_code=429, detail=_error("MFA_LOCKED", "Too many incorrect codes. Request a new login code."))
+        raise HTTPException(status_code=401, detail=_error("MFA_INVALID", "The verification code is invalid or expired."))
+    _set_refresh_cookie(response, result["refresh_token_plain"])
+    return _success({
+        "access_token": result["access_token"],
+        "token_type": "bearer",
+        "expires_in": result["expires_in"],
+        "user": result["user"],
     })
 
 
@@ -225,7 +262,7 @@ async def refresh(
         )
 
     try:
-        result = await auth_service.refresh_tokens(db, refresh_token)
+        result = await auth_service.refresh_tokens(db, refresh_token, request.client.host if request.client else "unknown")
     except ValueError:
         _clear_refresh_cookie(response)
         raise HTTPException(
@@ -238,7 +275,7 @@ async def refresh(
     return _success({
         "access_token": result["access_token"],
         "token_type":   "bearer",
-        "expires_in":   900,
+        "expires_in":   result["expires_in"],
     })
 
 
@@ -286,6 +323,8 @@ async def change_password(
 
     new_hash = hash_password(body.new_password)
     await user_model.update_user(db, current_user["user_id"], {"password_hash": new_hash})
+    await user_model.bump_auth_version(db, current_user["user_id"])
+    await auth_service.revoke_all_sessions(db, current_user["user_id"])
     await user_model.reset_failed_logins(db, current_user["user_id"])
     await write_audit_log(
         db, current_user["user_id"], current_user["role"], "password_changed",
@@ -303,10 +342,10 @@ async def forgot_password(
 ):
     # Always return 200 regardless of whether email exists — prevents enumeration.
     user = await user_model.find_by_email(db, str(body.email).lower().strip())
-    if user and email_is_configured():
+    if user and user.get("role") != "admin" and email_is_configured():
         token = secrets.token_urlsafe(36)
         await store_password_reset_token(token, str(user["_id"]))
-        link = f"{settings.FRONTEND_URL.rstrip('/')}/?reset_token={token}"
+        link = f"{settings.FRONTEND_URL.rstrip('/')}/#reset_token={token}"
         try:
             await send_order_email(str(body.email), "Reset your Shoply password", f"Use this link within 30 minutes to reset your password:\n{link}")
         except Exception:
@@ -324,12 +363,14 @@ async def reset_password(
     user_id = await consume_password_reset_token(body.token)
     if not user_id:
         raise HTTPException(status_code=400, detail=_error("RESET_TOKEN_INVALID", "This reset link is invalid or expired."))
-    user = await user_model.find_by_id(db, user_id)
-    if not user:
+    user = await db.users.find_one({"_id": ObjectId(user_id)})
+    if not user or user.get("role") == "admin":
         raise HTTPException(status_code=400, detail=_error("RESET_TOKEN_INVALID", "This reset link is invalid or expired."))
     await user_model.update_user(db, user_id, {"password_hash": hash_password(body.new_password)})
+    await user_model.bump_auth_version(db, user_id)
+    await auth_service.revoke_all_sessions(db, user_id)
     await user_model.reset_failed_logins(db, user_id)
-    await write_audit_log(db, user_id, "customer", "password_reset", "users", user_id, {}, request.client.host if request.client else "unknown")
+    await write_audit_log(db, user_id, user.get("role", "customer"), "password_reset", "users", user_id, {}, request.client.host if request.client else "unknown")
     return _success({"message": "Password reset successfully. You can sign in now."})
 
 

@@ -59,6 +59,10 @@ async def _create_indexes() -> None:
     await db.users.create_index("email", unique=True, background=True)
     await db.users.create_index("role", background=True)
     await db.users.create_index("verification_status", background=True)
+    await db.users.update_many(
+        {"auth_version": {"$exists": False}},
+        {"$set": {"auth_version": 1}},
+    )
 
     # Products — text index for full-text search
     await db.products.create_index(

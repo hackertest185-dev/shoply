@@ -41,7 +41,7 @@ def _now_utc() -> datetime:
     return datetime.now(tz=timezone.utc)
 
 
-def create_access_token(payload: dict[str, Any]) -> str:
+def create_access_token(payload: dict[str, Any], expires_minutes: int | None = None) -> str:
     """
     Create a short-lived RS256 access token.
     Payload must include: user_id, email, role.
@@ -49,14 +49,18 @@ def create_access_token(payload: dict[str, Any]) -> str:
     now = _now_utc()
     claims = {
         **payload,
-        "exp": now + timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES),
+        "exp": now + timedelta(minutes=expires_minutes or settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES),
         "iat": now,
         "jti": secrets.token_hex(16),   # unique token ID for revocation
     }
     return jwt.encode(claims, settings.JWT_PRIVATE_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
-def create_refresh_token(user_id: str, token_family: str) -> tuple[str, str]:
+def create_refresh_token(
+    user_id: str,
+    token_family: str,
+    expires_days: int | None = None,
+) -> tuple[str, str]:
     """
     Create a long-lived refresh token.
     Returns (plaintext_token, sha256_hash_for_storage).
@@ -68,7 +72,7 @@ def create_refresh_token(user_id: str, token_family: str) -> tuple[str, str]:
     claims = {
         "user_id": user_id,
         "token_family": token_family,
-        "exp": now + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS),
+        "exp": now + timedelta(days=expires_days or settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS),
         "iat": now,
         "jti": jti,
     }

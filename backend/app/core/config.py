@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "RS256"
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    ADMIN_MFA_REQUIRED: bool = True
+    ADMIN_MFA_TTL_SECONDS: int = 300
+    ADMIN_MFA_MAX_ATTEMPTS: int = 5
+    ADMIN_ACCESS_TOKEN_EXPIRE_MINUTES: int = 10
+    ADMIN_REFRESH_TOKEN_EXPIRE_DAYS: int = 1
+    PASSWORD_MIN_LENGTH: int = 12
 
     # ── Stripe ────────────────────────────────────────────────────────────────
     STRIPE_SECRET_KEY: str = ""
@@ -103,6 +109,12 @@ class Settings(BaseSettings):
             raise RuntimeError("DEBUG must be false in production or staging.")
         if not self.ALLOWED_ORIGINS or any(origin.strip() == "*" for origin in self.ALLOWED_ORIGINS):
             raise RuntimeError("ALLOWED_ORIGINS must contain explicit HTTPS origins.")
+        if self.ADMIN_MFA_REQUIRED and self.ADMIN_MFA_TTL_SECONDS > 900:
+            raise RuntimeError("ADMIN_MFA_TTL_SECONDS must be 15 minutes or less.")
+        if self.ADMIN_MFA_MAX_ATTEMPTS < 1 or self.ADMIN_MFA_MAX_ATTEMPTS > 10:
+            raise RuntimeError("ADMIN_MFA_MAX_ATTEMPTS must be between 1 and 10.")
+        if self.PASSWORD_MIN_LENGTH < 12:
+            raise RuntimeError("PASSWORD_MIN_LENGTH must be at least 12.")
 
 
 @lru_cache
