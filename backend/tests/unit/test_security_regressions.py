@@ -19,8 +19,8 @@ def _png_bytes() -> bytes:
     return output.getvalue()
 
 
-def test_plain_text_removes_control_characters_without_interpreting_html():
-    assert clean_text("  <script>alert(1)</script>\x00 hello  ") == "<script>alert(1)</script> hello"
+def test_plain_text_removes_control_characters_and_html_tags():
+    assert clean_text("  <script>alert(1)</script>\x00 hello  ") == "alert(1) hello"
 
 
 def test_image_normalization_outputs_metadata_free_webp():

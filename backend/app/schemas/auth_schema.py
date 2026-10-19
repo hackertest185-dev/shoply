@@ -58,22 +58,20 @@ class ForgotPasswordRequest(BaseModel):
 
 
 class EmailOtpRequest(BaseModel):
-    """Request a one-time sign-in or account-creation code by email."""
+    """Request a customer sign-in code for an already verified account."""
     model_config = ConfigDict(extra="forbid")
 
     email: EmailStr
-    mode: Literal["login", "register"] = "login"
-    name: str | None = Field(default=None, min_length=2, max_length=100)
+    mode: Literal["login"] = "login"
 
 
 class EmailOtpVerifyRequest(BaseModel):
-    """Verify an email OTP and create a session."""
+    """Verify a sign-in OTP and create a session."""
     model_config = ConfigDict(extra="forbid")
 
     email: EmailStr
     otp: str = Field(..., pattern=r"^[0-9]{6}$")
-    mode: Literal["login", "register"] = "login"
-    name: str | None = Field(default=None, min_length=2, max_length=100)
+    mode: Literal["login"] = "login"
 
 
 class ResetPasswordRequest(BaseModel):
@@ -126,4 +124,4 @@ class LoginResponse(BaseModel):
 
 class VerifyAccountRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    token: str = Field(..., description="The plaintext verification token from the email")
+    token: str = Field(..., min_length=32, max_length=256, description="The one-time token from the verification email")

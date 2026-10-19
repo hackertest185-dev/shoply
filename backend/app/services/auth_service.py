@@ -7,6 +7,8 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 from bson import ObjectId
+from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 
 from app.core.config import settings
 from app.core.redis_client import (
@@ -19,11 +21,12 @@ from app.core.security import (
     create_refresh_token,
     hash_password,
     hash_token,
+    generate_secure_token,
     verify_password,
 )
 from app.models import user_model
 from app.services.audit_log_service import write_audit_log
-from app.services.email_service import email_is_configured, send_email_otp
+from app.services.email_service import email_is_configured, send_email_otp, send_verification_email
 
 
 MAX_FAILED_LOGINS = 10
@@ -110,30 +113,73 @@ async def revoke_all_sessions(db, user_id: str) -> None:
 
 
 async def register_user(db, name: str, email: str, password: str, role: str) -> dict:
-    """Create customer accounts only. Admin accounts are DB-managed."""
+    """Create an unverified customer and email a one-time, account-bound link."""
     if role != "customer":
         raise ValueError("invalid_registration_role")
+    if not email_is_configured():
+        raise ValueError("EMAIL_NOT_CONFIGURED")
     email_lower = email.lower().strip()
     if await user_model.find_by_email(db, email_lower):
         raise ValueError("email_conflict")
-
-    user_id = await user_model.insert_user(
-        db,
-        {
+    token_plain, token_hash = generate_secure_token()
+    try:
+        user_id = await user_model.insert_user(db, {
             "name": name.strip(),
             "email": email_lower,
             "password_hash": hash_password(password),
             "role": "customer",
-            "is_verified": True,
+            "is_verified": False,
             "verification_status": None,
             "profile_photo_url": None,
             "addresses": [],
             "wishlist": [],
-            "verification_token": None,
-            "verification_token_expires": None,
-        },
-    )
+            "verification_token": token_hash,
+            "verification_token_expires": datetime.now(timezone.utc) + timedelta(seconds=settings.EMAIL_VERIFICATION_TTL_SECONDS),
+        })
+    except DuplicateKeyError as exc:
+        raise ValueError("email_conflict") from exc
+
+    link = f"{settings.FRONTEND_URL.rstrip('/')}/#verify_token={token_plain}"
+    try:
+        await send_verification_email(email_lower, link)
+    except Exception as exc:
+        # A failed delivery must not leave a newly registered address unusable.
+        await db.users.delete_one({"_id": ObjectId(user_id), "verification_token": token_hash, "is_verified": False})
+        raise ValueError("EMAIL_DELIVERY_FAILED") from exc
     return {"user_id": user_id}
+
+
+async def resend_verification(db, email: str) -> None:
+    """Rotate the link for a pending customer without disclosing account state."""
+    email_lower = email.lower().strip()
+    current = await db.users.find_one(
+        {"email": {"$eq": email_lower}, "role": "customer", "is_verified": False,
+         "status": {"$in": ["active", None]}},
+    )
+    if not current:
+        return
+    token_plain, token_hash = generate_secure_token()
+    result = await db.users.update_one(
+        {"_id": current["_id"], "is_verified": False,
+         "verification_token": current.get("verification_token")},
+        {"$set": {
+            "verification_token": token_hash,
+            "verification_token_expires": datetime.now(timezone.utc) + timedelta(seconds=settings.EMAIL_VERIFICATION_TTL_SECONDS),
+            "updated_at": datetime.now(timezone.utc),
+        }},
+    )
+    if result.matched_count:
+        link = f"{settings.FRONTEND_URL.rstrip('/')}/#verify_token={token_plain}"
+        try:
+            await send_verification_email(email_lower, link)
+        except Exception:
+            restore = {"verification_token": current.get("verification_token"),
+                       "verification_token_expires": current.get("verification_token_expires")}
+            await db.users.update_one(
+                {"_id": current["_id"], "verification_token": token_hash, "is_verified": False},
+                {"$set": restore},
+            )
+            raise
 
 
 async def authenticate_user(db, email: str, password: str, ip: str) -> dict:
@@ -242,7 +288,8 @@ async def authenticate_user(db, email: str, password: str, ip: str) -> dict:
             "user": {"email": user["email"], "role": "admin"},
         }
 
-    return await _issue_session(db, user, ip, "login_success", ("password",))
+    # Customer and delivery sessions are issued only after an email OTP.
+    raise ValueError("OTP_REQUIRED")
 
 
 async def verify_admin_mfa(db, challenge_id: str, otp: str, ip: str) -> dict:
@@ -275,7 +322,7 @@ async def verify_admin_mfa(db, challenge_id: str, otp: str, ip: str) -> dict:
         not raw_user
         or raw_user.get("role") != "admin"
         or raw_user.get("status", "active") != "active"
-        or raw_user.get("is_verified") is False
+        or raw_user.get("is_verified") is not True
     ):
         raise ValueError("MFA_INVALID")
 
@@ -288,37 +335,10 @@ async def verify_admin_mfa(db, challenge_id: str, otp: str, ip: str) -> dict:
 async def authenticate_email_otp(
     db, email: str, mode: str, name: str | None, ip: str
 ) -> dict:
-    """Authenticate or create a customer using email OTP only."""
+    """Authenticate an existing, verified non-admin account using email OTP."""
     email_lower = email.lower().strip()
     user = await user_model.find_by_email(db, email_lower)
-
-    if mode == "register":
-        if user:
-            raise ValueError("email_conflict")
-        if not name or len(name.strip()) < 2:
-            raise ValueError("name_required")
-        await user_model.insert_user(
-            db,
-            {
-                "name": name.strip(),
-                "email": email_lower,
-                "password_hash": hash_password(secrets.token_urlsafe(32)[:32]),
-                "role": "customer",
-                "is_verified": True,
-                "verification_status": None,
-                "profile_photo_url": None,
-                "addresses": [],
-                "wishlist": [],
-                "verification_token": None,
-                "verification_token_expires": None,
-            },
-        )
-        user = await user_model.find_by_email(db, email_lower)
-        if not user:
-            raise ValueError("USER_CREATE_FAILED")
-        return await _issue_session(db, user, ip, "register_email_otp")
-
-    if not user or not user.get("is_verified", False) or user.get("status", "active") != "active":
+    if mode != "login" or not user or user.get("is_verified") is not True or user.get("status", "active") != "active":
         raise ValueError("INVALID_CREDENTIALS")
     if user.get("role") == "admin":
         raise ValueError("ADMIN_MFA_REQUIRED")
@@ -358,13 +378,13 @@ async def refresh_tokens(db, refresh_token_plain: str, ip: str = "unknown") -> d
     if (
         not user
         or user.get("status", "active") != "active"
-        or user.get("is_verified") is False
+        or user.get("is_verified") is not True
         or int(user.get("auth_version", 1)) != int(stored.get("auth_version", 1))
     ):
         raise ValueError("TOKEN_INVALID")
 
     amr = tuple(stored.get("amr") or ("password",))
-    if user.get("role") == "admin" and "email_otp" not in amr:
+    if "email_otp" not in amr or (user.get("role") == "admin" and "password" not in amr):
         raise ValueError("TOKEN_INVALID")
 
     session = await _issue_session(db, user, ip, "token_refresh", amr)
@@ -396,23 +416,23 @@ async def logout_by_refresh_token(db, refresh_token_plain: str, ip: str) -> None
 
 
 async def verify_user_account(db, token_plain: str, ip: str) -> dict:
+    """Consume only the matching unexpired verification token, atomically."""
     token_hash = hash_token(token_plain)
-    user = await db.users.find_one({"verification_token": {"$eq": token_hash}})
+    now = datetime.now(timezone.utc)
+    user = await db.users.find_one_and_update(
+        {
+            "verification_token": {"$eq": token_hash},
+            "verification_token_expires": {"$gt": now},
+            "role": "customer",
+            "is_verified": False,
+        },
+        {"$set": {"is_verified": True, "updated_at": now},
+         "$unset": {"verification_token": "", "verification_token_expires": ""}},
+        return_document=ReturnDocument.AFTER,
+    )
     if not user:
         raise ValueError("INVALID_TOKEN")
-
-    expires = user.get("verification_token_expires")
-    if not expires or expires.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
-        raise ValueError("TOKEN_EXPIRED")
-
     user_id_str = str(user["_id"])
-    await db.users.update_one(
-        {"_id": user["_id"]},
-        {
-            "$set": {"is_verified": True, "updated_at": datetime.now(timezone.utc)},
-            "$unset": {"verification_token": "", "verification_token_expires": ""},
-        },
-    )
     await write_audit_log(
         db,
         user_id_str,

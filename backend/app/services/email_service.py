@@ -37,6 +37,18 @@ async def send_email_otp(recipient: str, otp: str) -> None:
     )
 
 
+async def send_verification_email(recipient: str, link: str) -> None:
+    if not email_is_configured():
+        raise RuntimeError("Email verification is not configured.")
+    await asyncio.to_thread(
+        _send_sync,
+        recipient,
+        "Verify your Shoply email",
+        f"Open this link to verify your Shoply email address. It expires in 24 hours:\n{link}\nIf you did not create an account, ignore this email.",
+        f"<p>Verify your Shoply email address to activate your account.</p><p><a href='{html.escape(link, quote=True)}'>Verify email</a></p><p>This link expires in 24 hours. If you did not create an account, ignore this email.</p>",
+    )
+
+
 async def send_order_email(recipient: str, subject: str, text_body: str) -> None:
     if not email_is_configured():
         return

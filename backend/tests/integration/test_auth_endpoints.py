@@ -10,12 +10,19 @@ from mongomock_motor import AsyncMongoMockClient
 
 from app.core.database import get_db
 from app.main import app
+from app.services import auth_service
 
 
 @pytest_asyncio.fixture
-async def client():
+async def client(monkeypatch):
     db = AsyncMongoMockClient().shoply_test
     app.dependency_overrides[get_db] = lambda: db
+    monkeypatch.setattr(auth_service, "email_is_configured", lambda: True)
+
+    async def fake_verification_email(email, link):
+        return None
+
+    monkeypatch.setattr(auth_service, "send_verification_email", fake_verification_email)
     try:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"

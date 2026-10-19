@@ -86,6 +86,7 @@ class Settings(BaseSettings):
     OTP_LOCK_SECONDS: int = 600         # 10-minute lock after exhaustion
     EMAIL_OTP_TTL_SECONDS: int = 600
     EMAIL_OTP_MAX_ATTEMPTS: int = 5
+    EMAIL_VERIFICATION_TTL_SECONDS: int = 24 * 60 * 60
 
     # ── Rate limits (used in slowapi decorators) ──────────────────────────────
     RATE_LIMIT_LOGIN: str = "5/15minute"

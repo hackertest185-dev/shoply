@@ -86,7 +86,7 @@ async def register(
     db=Depends(get_db),
 ):
     try:
-        result = await auth_service.register_user(
+        await auth_service.register_user(
             db, body.name, body.email, body.password, body.role.value
         )
     except ValueError as exc:
@@ -95,11 +95,28 @@ async def register(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=_error("CONFLICT", "An account with this email already exists."),
             )
+        if str(exc) in {"EMAIL_NOT_CONFIGURED", "EMAIL_DELIVERY_FAILED"}:
+            raise HTTPException(
+                status_code=503,
+                detail=_error("EMAIL_UNAVAILABLE", "We could not send the verification email. Please try again later."),
+            )
         raise
     return _success({
-        "message": "Account created. You can sign in now.",
-        "user_id": result["user_id"],
+        "message": "Check your email and click the verification link before signing in.",
     })
+
+
+@router.post("/resend-verification")
+@limiter.limit("3/hour")
+async def resend_verification(request: Request, body: ForgotPasswordRequest, db=Depends(get_db)):
+    if not await consume_rate_limit("resend-verification", str(body.email).lower().strip(), 3, 60 * 60):
+        raise HTTPException(status_code=429, detail=_error("RATE_LIMITED", "Please try again later."))
+    if email_is_configured():
+        try:
+            await auth_service.resend_verification(db, str(body.email))
+        except Exception:
+            pass  # Keep account existence and email delivery state private.
+    return _success({"message": "If this account needs verification, a new link has been sent."})
 
 
 @router.post("/email/request-otp")
@@ -109,7 +126,7 @@ async def request_email_otp(
     body: EmailOtpRequest,
     db=Depends(get_db),
 ):
-    """Send a six-digit Gmail OTP for customer registration or sign-in."""
+    """Send a six-digit sign-in OTP only to a verified non-admin account."""
     if not email_is_configured():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -119,15 +136,8 @@ async def request_email_otp(
     if not await consume_rate_limit("email-otp-request", email, 5, 60 * 60):
         raise HTTPException(status_code=429, detail=_error("RATE_LIMITED", "Too many code requests. Try again later."))
     existing = await user_model.find_by_email(db, email)
-    if body.mode == "register":
-        if not body.name or len(body.name.strip()) < 2:
-            raise HTTPException(status_code=422, detail=_error("NAME_REQUIRED", "Enter your full name to create an account."))
-        if existing:
-            raise HTTPException(status_code=409, detail=_error("CONFLICT", "An account with this email already exists. Sign in instead."))
-    elif not existing:
-        raise HTTPException(status_code=404, detail=_error("ACCOUNT_NOT_FOUND", "No account uses this email. Choose Create Account first."))
-    elif existing.get("role") == "admin":
-        raise HTTPException(status_code=400, detail=_error("PASSWORD_REQUIRED", "Use password sign-in for this account."))
+    if not existing or existing.get("is_verified") is not True or existing.get("status", "active") != "active" or existing.get("role") == "admin":
+        return _success({"message": "If this email has a verified account, a sign-in code has been sent.", "expires_in": settings.EMAIL_OTP_TTL_SECONDS})
 
     otp = str(secrets.randbelow(1_000_000)).zfill(6)
     await store_email_otp(email, otp)
@@ -139,7 +149,7 @@ async def request_email_otp(
         if isinstance(exc, RuntimeError):
             raise HTTPException(status_code=503, detail=_error("EMAIL_NOT_CONFIGURED", str(exc)))
         raise HTTPException(status_code=502, detail=_error("EMAIL_DELIVERY_FAILED", "We could not send the code. Please try again."))
-    return _success({"message": "A verification code was sent to your email.", "expires_in": settings.EMAIL_OTP_TTL_SECONDS})
+    return _success({"message": "If this email has a verified account, a sign-in code has been sent.", "expires_in": settings.EMAIL_OTP_TTL_SECONDS})
 
 
 @router.post("/email/verify-otp")
@@ -164,13 +174,8 @@ async def verify_email_otp_endpoint(
 
     ip = request.client.host if request.client else "unknown"
     try:
-        auth_result = await auth_service.authenticate_email_otp(db, email, body.mode, body.name, ip)
-    except ValueError as exc:
-        code = str(exc)
-        if code == "email_conflict":
-            raise HTTPException(status_code=409, detail=_error("CONFLICT", "An account with this email already exists. Sign in instead."))
-        if code == "name_required":
-            raise HTTPException(status_code=422, detail=_error("NAME_REQUIRED", "Enter your full name to create an account."))
+        auth_result = await auth_service.authenticate_email_otp(db, email, body.mode, None, ip)
+    except ValueError:
         raise HTTPException(status_code=401, detail=_error("INVALID_CREDENTIALS", "This email cannot be signed in."))
 
     _set_refresh_cookie(response, auth_result["refresh_token_plain"])
@@ -207,6 +212,8 @@ async def login(
             )
         if code in {"MFA_UNAVAILABLE", "MFA_DELIVERY_FAILED"}:
             raise HTTPException(status_code=503, detail=_error("MFA_UNAVAILABLE", "Admin verification is temporarily unavailable."))
+        if code == "OTP_REQUIRED":
+            raise HTTPException(status_code=401, detail=_error("OTP_REQUIRED", "Use an email code to sign in."))
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=_error("INVALID_CREDENTIALS", "Invalid email or password."),
@@ -351,9 +358,9 @@ async def forgot_password(
 ):
     # Always return 200 regardless of whether email exists — prevents enumeration.
     user = await user_model.find_by_email(db, str(body.email).lower().strip())
-    if user and user.get("role") != "admin" and email_is_configured():
+    if user and user.get("role") == "customer" and user.get("is_verified") is True and email_is_configured():
         token = secrets.token_urlsafe(36)
-        await store_password_reset_token(token, str(user["_id"]))
+        await store_password_reset_token(token, str(user["_id"]), int(user.get("auth_version", 1)))
         link = f"{settings.FRONTEND_URL.rstrip('/')}/#reset_token={token}"
         try:
             await send_order_email(str(body.email), "Reset your Shoply password", f"Use this link within 30 minutes to reset your password:\n{link}")
@@ -369,14 +376,21 @@ async def reset_password(
     body: ResetPasswordRequest,
     db=Depends(get_db),
 ):
-    user_id = await consume_password_reset_token(body.token)
-    if not user_id:
+    reset_claim = await consume_password_reset_token(body.token)
+    if not reset_claim:
         raise HTTPException(status_code=400, detail=_error("RESET_TOKEN_INVALID", "This reset link is invalid or expired."))
-    user = await db.users.find_one({"_id": ObjectId(user_id)})
-    if not user or user.get("role") == "admin":
+    user_id = reset_claim["user_id"]
+    if not ObjectId.is_valid(user_id):
         raise HTTPException(status_code=400, detail=_error("RESET_TOKEN_INVALID", "This reset link is invalid or expired."))
-    await user_model.update_user(db, user_id, {"password_hash": hash_password(body.new_password)}, allow_sensitive=True)
-    await user_model.bump_auth_version(db, user_id)
+    from pymongo import ReturnDocument
+    user = await db.users.find_one_and_update(
+        {"_id": ObjectId(user_id), "role": "customer", "is_verified": True,
+         "status": {"$in": ["active", None]}, "auth_version": reset_claim["auth_version"]},
+        {"$set": {"password_hash": hash_password(body.new_password)}, "$inc": {"auth_version": 1}},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not user:
+        raise HTTPException(status_code=400, detail=_error("RESET_TOKEN_INVALID", "This reset link is invalid or expired."))
     await auth_service.revoke_all_sessions(db, user_id)
     await user_model.reset_failed_logins(db, user_id)
     await write_audit_log(db, user_id, user.get("role", "customer"), "password_reset", "users", user_id, {}, request.client.host if request.client else "unknown")
@@ -394,16 +408,10 @@ async def verify_account(
     
     try:
         result = await auth_service.verify_user_account(db, body.token, ip)
-    except ValueError as exc:
-        code = str(exc)
-        if code == "TOKEN_EXPIRED":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=_error("TOKEN_EXPIRED", "Verification token has expired. Please request a new one."),
-            )
+    except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=_error("INVALID_TOKEN", "Invalid or malformed verification token."),
+            detail=_error("INVALID_TOKEN", "This verification link is invalid or expired."),
         )
 
     return _success(result)

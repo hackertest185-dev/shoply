@@ -54,7 +54,7 @@ async def get_current_user(
         {"_id": ObjectId(user_id)},
         {"email": 1, "role": 1, "status": 1, "is_verified": 1, "auth_version": 1},
     )
-    if not user or user.get("status", "active") != "active" or user.get("is_verified") is False:
+    if not user or user.get("status", "active") != "active" or user.get("is_verified") is not True:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"code": "TOKEN_INVALID", "message": "Account is unavailable."},
@@ -72,10 +72,11 @@ async def get_current_user(
             detail={"code": "TOKEN_INVALID", "message": "Session is no longer valid."},
             headers={"WWW-Authenticate": "Bearer"},
         )
-    if user.get("role") == "admin" and "email_otp" not in (payload.get("amr") or []):
+    amr = payload.get("amr") or []
+    if "email_otp" not in amr or (user.get("role") == "admin" and "password" not in amr):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"code": "MFA_REQUIRED", "message": "Admin verification is required."},
+            detail={"code": "MFA_REQUIRED", "message": "An email-code session is required."},
             headers={"WWW-Authenticate": "Bearer"},
         )
 

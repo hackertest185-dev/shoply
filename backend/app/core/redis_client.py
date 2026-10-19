@@ -151,7 +151,10 @@ async def verify_email_otp(email: str, submitted: str) -> dict[str, Any]:
     if not stored_hash:
         return {"valid": False, "locked": False, "expired": True, "attempts_remaining": 0}
     if bcrypt.checkpw(submitted.encode(), stored_hash.encode()):
-        await redis.delete(f"{EMAIL_OTP_KEY_PREFIX}{key}")
+        # GETDEL makes concurrent uses of the same code one-time as well.
+        claimed = await redis.getdel(f"{EMAIL_OTP_KEY_PREFIX}{key}")
+        if claimed != stored_hash:
+            return {"valid": False, "locked": False, "expired": True, "attempts_remaining": 0}
         await redis.delete(f"{EMAIL_OTP_ATTEMPTS_KEY_PREFIX}{key}")
         return {"valid": True, "locked": False, "attempts_remaining": settings.EMAIL_OTP_MAX_ATTEMPTS}
     attempts_key = f"{EMAIL_OTP_ATTEMPTS_KEY_PREFIX}{key}"
@@ -173,20 +176,32 @@ async def delete_email_otp(email: str) -> None:
     await redis.delete(f"{EMAIL_OTP_LOCK_KEY_PREFIX}{key}")
 
 
-async def store_password_reset_token(token: str, user_id: str, ttl: int = 1800) -> None:
+async def store_password_reset_token(token: str, user_id: str, auth_version: int, ttl: int = 1800) -> None:
     redis = get_redis()
     digest = hashlib.sha256(token.encode()).hexdigest()
-    await redis.set(f"{PASSWORD_RESET_KEY_PREFIX}{digest}", user_id, ex=ttl)
+    await redis.set(
+        f"{PASSWORD_RESET_KEY_PREFIX}{digest}",
+        json.dumps({"user_id": user_id, "auth_version": auth_version, "purpose": "password_reset"}),
+        ex=ttl,
+    )
 
 
-async def consume_password_reset_token(token: str) -> str | None:
+async def consume_password_reset_token(token: str) -> dict[str, Any] | None:
     redis = get_redis()
     digest = hashlib.sha256(token.encode()).hexdigest()
     key = f"{PASSWORD_RESET_KEY_PREFIX}{digest}"
-    value = await redis.get(key)
-    if value:
-        await redis.delete(key)
-    return value
+    value = await redis.getdel(key)
+    if not value:
+        return None
+    try:
+        claim = json.loads(value)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(claim, dict) or claim.get("purpose") != "password_reset":
+        return None
+    if not isinstance(claim.get("user_id"), str) or not isinstance(claim.get("auth_version"), int):
+        return None
+    return claim
 
 
 async def store_admin_mfa_challenge(
