@@ -30,6 +30,7 @@ class OrderConfirmRequest(BaseModel):
 class OrderRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     whatsapp_number: str = Field(..., pattern=r"^\+[1-9]\d{7,14}$", description="WhatsApp number in international format, for example +201234567890")
+    coupon_code: str | None = Field(default=None, min_length=3, max_length=32)
 
 
 class OrderStatusUpdate(BaseModel):

@@ -12,7 +12,7 @@ from slowapi.util import get_remote_address
 from app.core.database import get_db
 from app.core.config import settings
 from app.core.security import hash_password, verify_password
-from app.core.redis_client import store_email_otp, verify_email_otp, delete_email_otp
+from app.core.redis_client import store_email_otp, verify_email_otp, delete_email_otp, store_password_reset_token, consume_password_reset_token
 from app.dependencies.auth_dependency import get_current_user
 from app.dependencies.rbac_dependency import require_customer
 from app.schemas.auth_schema import (
@@ -23,11 +23,12 @@ from app.schemas.auth_schema import (
     EmailOtpRequest,
     EmailOtpVerifyRequest,
     VerifyAccountRequest,
+    ResetPasswordRequest,
 )
 from app.models import user_model
 from app.services import auth_service
 from app.services.audit_log_service import write_audit_log
-from app.services.email_service import email_is_configured, send_email_otp
+from app.services.email_service import email_is_configured, send_email_otp, send_order_email
 
 router  = APIRouter(prefix="/auth", tags=["Authentication"])
 limiter = Limiter(key_func=get_remote_address)
@@ -300,9 +301,36 @@ async def forgot_password(
     body: ForgotPasswordRequest,
     db=Depends(get_db),
 ):
-    # Always return 200 regardless of whether email exists — prevents enumeration
-    # TODO: Call email service with reset link
+    # Always return 200 regardless of whether email exists — prevents enumeration.
+    user = await user_model.find_by_email(db, str(body.email).lower().strip())
+    if user and email_is_configured():
+        token = secrets.token_urlsafe(36)
+        await store_password_reset_token(token, str(user["_id"]))
+        link = f"{settings.FRONTEND_URL.rstrip('/')}/?reset_token={token}"
+        try:
+            await send_order_email(str(body.email), "Reset your Shoply password", f"Use this link within 30 minutes to reset your password:\n{link}")
+        except Exception:
+            pass
     return _success({"message": "If that email exists, a reset link has been sent."})
+
+
+@router.post("/reset-password")
+@limiter.limit("5/hour")
+async def reset_password(
+    request: Request,
+    body: ResetPasswordRequest,
+    db=Depends(get_db),
+):
+    user_id = await consume_password_reset_token(body.token)
+    if not user_id:
+        raise HTTPException(status_code=400, detail=_error("RESET_TOKEN_INVALID", "This reset link is invalid or expired."))
+    user = await user_model.find_by_id(db, user_id)
+    if not user:
+        raise HTTPException(status_code=400, detail=_error("RESET_TOKEN_INVALID", "This reset link is invalid or expired."))
+    await user_model.update_user(db, user_id, {"password_hash": hash_password(body.new_password)})
+    await user_model.reset_failed_logins(db, user_id)
+    await write_audit_log(db, user_id, "customer", "password_reset", "users", user_id, {}, request.client.host if request.client else "unknown")
+    return _success({"message": "Password reset successfully. You can sign in now."})
 
 
 @router.post("/verify", status_code=status.HTTP_200_OK)

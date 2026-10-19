@@ -321,6 +321,7 @@ const api = {
     refresh:        ()      => silentRefresh(),
     me:             ()      => apiFetch("/auth/me"),
     forgotPassword: (body)  => apiFetch("/auth/forgot-password",{ method: "POST", body }),
+    resetPassword:  (body)  => apiFetch("/auth/reset-password", { method: "POST", body }),
   },
   products: {
     list:   (params = {}) => apiFetch("/products?" + new URLSearchParams(params)),
@@ -350,6 +351,18 @@ const api = {
     get:    (id)   => apiFetch(`/orders/${id}`),
     receipt: (id)  => apiDownload(`/orders/${id}/receipt`),
     vendorOrders: (p) => apiFetch("/vendor/orders?" + new URLSearchParams(p)),
+    chat: {
+      list: (id) => apiFetch(`/orders/${id}/chat`),
+      send: (id, body) => apiFetch(`/orders/${id}/chat`, { method: "POST", body }),
+    },
+    coupons: {
+      list: () => apiFetch("/coupons"),
+      create: (body) => apiFetch("/coupons", { method: "POST", body }),
+      disable: (id) => apiFetch(`/coupons/${id}`, { method: "DELETE" }),
+    },
+  },
+  coupons: {
+    validate: (body) => apiFetch("/coupons/validate", { method: "POST", body }),
   },
   delivery: {
     verificationStatus: ()      => apiFetch("/delivery/verification/status"),
@@ -375,6 +388,10 @@ const api = {
     deliverOrder:   (id)         => apiFetch(`/admin/orders/${id}/deliver`, { method: "POST", body: { payment_received: true } }),
     assignDelivery:  (id, body)   => apiFetch(`/admin/orders/${id}/assign`, { method: "POST", body }),
     cancelOrder:     (id)         => apiFetch(`/admin/orders/${id}/cancel`, { method: "POST" }),
+    chat: {
+      list: (id) => apiFetch(`/admin/orders/${id}/chat`),
+      send: (id, body) => apiFetch(`/admin/orders/${id}/chat`, { method: "POST", body }),
+    },
   },
 };
 
@@ -810,6 +827,7 @@ function AuthModal({ state, dispatch }) {
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [serverError, setServerError] = useState("");
+  const [forgotMode, setForgotMode] = useState(false);
 
   useEffect(() => {
     setMode(ui.authModal || "login");
@@ -818,6 +836,7 @@ function AuthModal({ state, dispatch }) {
     setOtp("");
     setErrors({});
     setServerError("");
+    setForgotMode(false);
   }, [ui.authModal]);
 
   const updateForm = (k, v) => setForm(p => ({ ...p, [k]: v }));
@@ -919,11 +938,20 @@ function AuthModal({ state, dispatch }) {
     setOtp("");
     setErrors({});
     setServerError("");
+    setForgotMode(false);
+  };
+
+  const requestReset = async () => {
+    if (!form.email.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) { setErrors({ email: "Invalid email format" }); return; }
+    setLoading(true); setServerError("");
+    const res = await api.auth.forgotPassword({ email: form.email });
+    setLoading(false);
+    setServerError(res.success ? "If this email exists, a reset link was sent. Check your inbox and spam folder." : (res.error?.message || "Could not request a reset link."));
   };
 
   return (
     <Modal isOpen={!!ui.authModal} onClose={close} title="">
-      <div style={{ display: "flex", gap: "0", marginBottom: "24px", borderBottom: "1px solid var(--navy-border)" }}>
+      {!forgotMode && <div style={{ display: "flex", gap: "0", marginBottom: "24px", borderBottom: "1px solid var(--navy-border)" }}>
         {["login", "register"].map(m => (
           <button key={m} onClick={() => switchMode(m)} style={{
             flex: 1, padding: "10px", background: "none", border: "none",
@@ -935,15 +963,23 @@ function AuthModal({ state, dispatch }) {
             {m === "login" ? "Sign In" : "Create Account"}
           </button>
         ))}
-      </div>
+      </div>}
 
       <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-        {mode === "register" && (
+        {!forgotMode && mode === "register" && (
           <Input label="Full Name" value={form.name} onChange={e => updateForm("name", e.target.value)} placeholder="Jane Smith" error={errors.name} required />
         )}
-        <Input label="Email" type="email" value={form.email} onChange={e => updateForm("email", e.target.value)} placeholder="you@example.com" error={errors.email} required disabled={otpStep} />
+        {!forgotMode && <Input label="Email" type="email" value={form.email} onChange={e => updateForm("email", e.target.value)} placeholder="you@example.com" error={errors.email} required disabled={otpStep} />}
 
-        {method === "password" && (
+        {forgotMode && <>
+          <h2 style={{ fontFamily: "var(--font-serif)", fontSize: 24, margin: 0 }}>Reset your password</h2>
+          <p style={{ color: "var(--muted)", fontSize: 13, lineHeight: 1.5 }}>We will email you a secure reset link.</p>
+          <Input label="Email" type="email" value={form.email} onChange={e => updateForm("email", e.target.value)} placeholder="you@example.com" error={errors.email} required />
+          <Btn full size="lg" onClick={requestReset} disabled={loading}>{loading ? "Sending…" : "Send reset link"}</Btn>
+          <button onClick={() => setForgotMode(false)} style={{ background: "none", border: "none", color: "var(--muted)", fontSize: 13, cursor: "pointer", textDecoration: "underline" }}>Back to sign in</button>
+        </>}
+
+        {!forgotMode && method === "password" && (
           <>
             <Input label="Password" type="password" value={form.password} onChange={e => updateForm("password", e.target.value)} placeholder={mode === "login" ? "Your password" : "Min 8 characters"} error={errors.password} required />
             <Btn full size="lg" onClick={handlePasswordSubmit} disabled={loading}>
@@ -952,10 +988,11 @@ function AuthModal({ state, dispatch }) {
             <button onClick={() => { setMethod("otp"); setOtpStep(false); setServerError(""); setErrors({}); }} style={{ background: "none", border: "1px solid var(--navy-border)", borderRadius: "var(--radius-sm)", color: "var(--amber)", padding: "11px", fontSize: "13px", cursor: "pointer", fontFamily: "var(--font-sans)" }}>
               {mode === "login" ? "Sign in with email code" : "Create with email code"}
             </button>
+            {mode === "login" && <button onClick={() => { setForgotMode(true); setServerError(""); setErrors({}); }} style={{ background: "none", border: "none", color: "var(--muted)", fontSize: "12px", cursor: "pointer", textDecoration: "underline" }}>Forgot password?</button>}
           </>
         )}
 
-        {method === "otp" && !otpStep && (
+        {!forgotMode && method === "otp" && !otpStep && (
           <>
             <p style={{ fontSize: "13px", color: "var(--muted)", lineHeight: 1.5, margin: 0 }}>
               We will send a 6-digit verification code to your email. No password is needed.
@@ -969,7 +1006,7 @@ function AuthModal({ state, dispatch }) {
           </>
         )}
 
-        {method === "otp" && otpStep && (
+        {!forgotMode && method === "otp" && otpStep && (
           <>
             <p style={{ fontSize: "13px", color: "var(--muted)", lineHeight: 1.5, margin: 0 }}>
               Enter the 6-digit code sent to <strong style={{ color: "var(--white)" }}>{form.email}</strong>.
@@ -1782,6 +1819,18 @@ function CheckoutPage({ state, dispatch }) {
   const [whatsappNumber, setWhatsappNumber] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [couponCode, setCouponCode] = useState("");
+  const [coupon, setCoupon] = useState(null);
+  const [couponLoading, setCouponLoading] = useState(false);
+
+  const applyCoupon = async () => {
+    if (!couponCode.trim()) return;
+    setCouponLoading(true); setError("");
+    const res = await api.coupons.validate({ code: couponCode.trim(), subtotal: cart.summary.subtotal });
+    setCouponLoading(false);
+    if (res.success) setCoupon(res.data);
+    else { setCoupon(null); setError(res.error?.message || "Could not apply this coupon."); }
+  };
 
   const placeOrder = async () => {
     const number = whatsappNumber.replace(/[\s()-]/g, "");
@@ -1795,7 +1844,7 @@ function CheckoutPage({ state, dispatch }) {
     }
     setLoading(true);
     setError("");
-    const res = await api.orders.create({ whatsapp_number: number });
+    const res = await api.orders.create({ whatsapp_number: number, ...(coupon?.code ? { coupon_code: coupon.code } : {}) });
     setLoading(false);
     if (!res.success) {
       setError(res.error?.message || res.detail?.message || "Could not place your order. Please try again.");
@@ -1818,16 +1867,39 @@ function CheckoutPage({ state, dispatch }) {
             <span style={{ fontFamily: "var(--font-mono)" }}>{formatMoney(item.subtotal)}</span>
           </div>
         ))}
-        <div style={{ display: "flex", justifyContent: "space-between", padding: "18px 0 24px", fontWeight: 700 }}>
-          <span>Estimated total</span><span style={{ color: "var(--amber)", fontFamily: "var(--font-mono)" }}>{formatMoney(cart.summary.total)}</span>
-        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", padding: "18px 0 8px", fontWeight: 700 }}><span>Subtotal</span><span style={{ color: "var(--amber)", fontFamily: "var(--font-mono)" }}>{formatMoney(cart.summary.total)}</span></div>
+        {coupon && <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0 18px", color: "var(--success)", fontSize: 13 }}><span>Coupon {coupon.code}</span><span>-{formatMoney(coupon.discount)}</span></div>}
+        <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0 24px", fontWeight: 700, borderTop: "1px solid var(--navy-border)" }}><span>Total</span><span style={{ color: "var(--amber)", fontFamily: "var(--font-mono)" }}>{formatMoney(coupon?.total ?? cart.summary.total)}</span></div>
         <Input label="WhatsApp number with country code" type="tel" value={whatsappNumber} onChange={e => setWhatsappNumber(e.target.value)} placeholder="+201234567890" required />
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-end", marginTop: 4 }}><div style={{ flex: 1 }}><Input label="Coupon code (optional)" value={couponCode} onChange={e => { setCouponCode(e.target.value.toUpperCase()); setCoupon(null); }} placeholder="WELCOME10" /></div><Btn variant="outline" onClick={applyCoupon} disabled={couponLoading}>{couponLoading ? "…" : "Apply"}</Btn></div>
         <p style={{ color: "var(--muted)", fontSize: 12, margin: "8px 0 18px" }}>No payment is taken now. The admin will message this number to arrange your order.</p>
         {error && <p style={{ color: "var(--danger)", fontSize: 13, marginBottom: 14 }}>{error}</p>}
         <Btn full size="lg" onClick={placeOrder} disabled={loading || cart.items.length === 0}>{loading ? "Submitting…" : "Submit Order Request"}</Btn>
       </div>
     </main>
   );
+}
+
+function OrderChat({ orderId }) {
+  const [open, setOpen] = useState(false);
+  const [messages, setMessages] = useState([]);
+  const [text, setText] = useState("");
+  const [error, setError] = useState("");
+  const load = async () => { const res = await api.orders.chat.list(orderId); if (res.success) setMessages(res.data || []); else setError(res.error?.message || "Could not load chat."); };
+  useEffect(() => { if (!open) return undefined; load(); const timer = window.setInterval(load, 10000); return () => window.clearInterval(timer); }, [open, orderId]);
+  const send = async () => { if (!text.trim()) return; const res = await api.orders.chat.send(orderId, { text: text.trim() }); if (res.success) { setMessages(current => [...current, res.data]); setText(""); } else setError(res.error?.message || "Could not send message."); };
+  return <div style={{ marginTop: 16 }}><Btn size="sm" variant="outline" onClick={() => setOpen(value => !value)}>{open ? "Close chat" : "Message the store"}</Btn>{open && <div style={{ marginTop: 12, padding: 14, border: "1px solid var(--navy-border)", borderRadius: 10 }}><div style={{ maxHeight: 170, overflowY: "auto", display: "grid", gap: 8, marginBottom: 10 }}>{messages.length ? messages.map(message => <div key={message.id} style={{ padding: "8px 10px", borderRadius: 8, background: message.sender_role === "customer" ? "#dfbd8920" : "#10b98120", justifySelf: message.sender_role === "customer" ? "end" : "start", maxWidth: "85%", fontSize: 13 }}>{message.text}<div style={{ color: "var(--muted)", fontSize: 10, marginTop: 3 }}>{message.sender_role === "customer" ? "You" : "Shoply"}</div></div>) : <span style={{ color: "var(--muted)", fontSize: 12 }}>No messages yet.</span>}</div><div style={{ display: "flex", gap: 8 }}><input value={text} onChange={event => setText(event.target.value)} onKeyDown={event => { if (event.key === "Enter") send(); }} placeholder="Write a message…" style={{ flex: 1, padding: "9px 10px", borderRadius: 8, border: "1px solid var(--navy-border)", background: "var(--navy-mid)", color: "var(--white)" }} /><Btn size="sm" onClick={send}>Send</Btn></div>{error && <p style={{ color: "var(--danger)", fontSize: 12, marginTop: 8 }}>{error}</p>}</div>}</div>;
+}
+
+function AdminOrderChat({ orderId }) {
+  const [open, setOpen] = useState(false);
+  const [messages, setMessages] = useState([]);
+  const [text, setText] = useState("");
+  const [error, setError] = useState("");
+  const load = async () => { const res = await api.admin.chat.list(orderId); if (res.success) setMessages(res.data || []); else setError(res.error?.message || "Could not load chat."); };
+  useEffect(() => { if (!open) return undefined; load(); const timer = window.setInterval(load, 10000); return () => window.clearInterval(timer); }, [open, orderId]);
+  const send = async () => { if (!text.trim()) return; const res = await api.admin.chat.send(orderId, { text: text.trim() }); if (res.success) { setMessages(current => [...current, res.data]); setText(""); } else setError(res.error?.message || "Could not send message."); };
+  return <div style={{ marginTop: 12 }}><Btn size="sm" variant="ghost" onClick={() => setOpen(value => !value)}>{open ? "Close customer chat" : "Open customer chat"}</Btn>{open && <div style={{ marginTop: 10, padding: 12, border: "1px solid var(--navy-border)", borderRadius: 8 }}><div style={{ maxHeight: 150, overflowY: "auto", display: "grid", gap: 7, marginBottom: 9 }}>{messages.length ? messages.map(message => <div key={message.id} style={{ padding: "7px 9px", borderRadius: 7, background: message.sender_role === "admin" ? "#dfbd8920" : "#10b98120", justifySelf: message.sender_role === "admin" ? "end" : "start", maxWidth: "85%", fontSize: 12 }}>{message.text}</div>) : <span style={{ color: "var(--muted)", fontSize: 12 }}>No messages yet.</span>}</div><div style={{ display: "flex", gap: 7 }}><input value={text} onChange={event => setText(event.target.value)} onKeyDown={event => { if (event.key === "Enter") send(); }} placeholder="Reply to customer…" style={{ flex: 1, padding: "8px 9px", borderRadius: 7, border: "1px solid var(--navy-border)", background: "var(--navy-mid)", color: "var(--white)" }} /><Btn size="sm" onClick={send}>Send</Btn></div>{error && <p style={{ color: "var(--danger)", fontSize: 12, marginTop: 7 }}>{error}</p>}</div>}</div>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1988,6 +2060,7 @@ function OrdersPage({ state, dispatch }) {
                   ))}
                 </div>
               )}
+              <OrderChat orderId={order.id} />
               {order.status === "delivered" && order.payment_status === "paid" && (
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginTop: 17 }}>
                   <span style={{ color: "var(--success)", fontSize: 13 }}>Delivered {order.delivered_at ? new Date(order.delivered_at).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric", timeZone: "Africa/Cairo" }) : ""} · Payment confirmed</span>
@@ -2244,6 +2317,7 @@ function AdminOrderRequests({ onDelivered }) {
               {order.items?.map(item => `${item.name || item.product_id} × ${item.qty}`).join(" · ")}
             </div>
             {order.contact_status === "contacted" && <div style={{ color: "var(--success)", fontSize: 12, marginTop: 10 }}>✓ Contacted on WhatsApp</div>}
+            <AdminOrderChat orderId={order.id} />
           </div>
         ))}
       </div>}
@@ -2259,6 +2333,17 @@ function AdminOrderRequests({ onDelivered }) {
       </Modal>
     </section>
   );
+}
+
+function AdminCoupons() {
+  const [coupons, setCoupons] = useState([]);
+  const [form, setForm] = useState({ code: "", discount_type: "percent", value: "", min_order_total: "", max_uses: "" });
+  const [message, setMessage] = useState("");
+  const load = async () => { const res = await api.admin.coupons.list(); if (res.success) setCoupons(res.data || []); else setMessage(res.error?.message || "Could not load coupons."); };
+  useEffect(() => { load(); }, []);
+  const create = async () => { const res = await api.admin.coupons.create({ code: form.code, discount_type: form.discount_type, value: Number(form.value), min_order_total: Number(form.min_order_total || 0), max_uses: Number(form.max_uses || 0), active: true }); if (!res.success) { setMessage(res.error?.message || "Could not create coupon."); return; } setForm({ code: "", discount_type: "percent", value: "", min_order_total: "", max_uses: "" }); setMessage("Coupon created."); load(); };
+  const disable = async id => { await api.admin.coupons.disable(id); load(); };
+  return <section style={{ margin: "36px 0" }}><div><h2 style={{ fontFamily: "var(--font-serif)", fontSize: 24 }}>Coupons</h2><p style={{ color: "var(--muted)", fontSize: 13 }}>Create simple percentage or fixed EGP discounts.</p></div><div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 8, margin: "14px 0" }}><Input label="Code" value={form.code} onChange={event => setForm({ ...form, code: event.target.value.toUpperCase() })} placeholder="WELCOME10" /><Select label="Type" value={form.discount_type} onChange={event => setForm({ ...form, discount_type: event.target.value })} options={[{ value: "percent", label: "Percent" }, { value: "fixed", label: "Fixed EGP" }]} /><Input label="Value" type="number" value={form.value} onChange={event => setForm({ ...form, value: event.target.value })} /><Input label="Min order" type="number" value={form.min_order_total} onChange={event => setForm({ ...form, min_order_total: event.target.value })} /><Input label="Max uses (0 = unlimited)" type="number" value={form.max_uses} onChange={event => setForm({ ...form, max_uses: event.target.value })} /></div><Btn size="sm" onClick={create} disabled={!form.code || !form.value}>Create coupon</Btn>{message && <p style={{ color: "var(--muted)", fontSize: 12, marginTop: 8 }}>{message}</p>}<div style={{ display: "grid", gap: 8, marginTop: 14 }}>{coupons.map(coupon => <div key={coupon.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, padding: 12, background: "var(--navy-card)", border: "1px solid var(--navy-border)", borderRadius: 8 }}><span><strong>{coupon.code}</strong> · {coupon.discount_type === "percent" ? `${coupon.value}%` : `${coupon.value} EGP`} · used {coupon.used_count || 0}</span>{coupon.active && <Btn size="sm" variant="ghost" onClick={() => disable(coupon.id)}>Disable</Btn>}</div>)}</div></section>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2359,10 +2444,28 @@ function AdminDashboard({ dispatch }) {
       <h1 className="shop-section-title" style={{ fontFamily: "var(--font-serif)", fontSize: 50 }}>Admin dashboard</h1>
       <p style={{ color: "var(--muted)", marginTop: 6 }}>Manage products and contact customers about their orders.</p>
       <AdminProducts dispatch={dispatch} />
+      <AdminCoupons />
       <AdminOrderRequests onDelivered={() => setSalesRevision(value => value + 1)} />
       <AdminDeliverySales revision={salesRevision} />
     </main>
   );
+}
+
+function ResetPasswordPage({ dispatch }) {
+  const token = new URLSearchParams(window.location.search).get("reset_token") || "";
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
+  const submit = async () => {
+    if (password.length < 8 || password !== confirm) { setMessage("Use at least 8 characters and make both passwords match."); return; }
+    setLoading(true); setMessage("");
+    const res = await api.auth.resetPassword({ token, new_password: password });
+    setLoading(false);
+    if (res.success) { setMessage("Password reset. You can sign in now."); window.history.replaceState({}, "", "/"); window.setTimeout(() => dispatch({ type: "AUTH_MODAL", mode: "login" }), 700); }
+    else setMessage(res.error?.message || "This reset link is invalid or expired.");
+  };
+  return <main style={{ maxWidth: 520, margin: "0 auto", padding: "90px 24px 120px" }}><div className="shop-kicker">SHOPLY ACCOUNT</div><h1 className="shop-section-title" style={{ fontFamily: "var(--font-serif)", fontSize: 46 }}>Choose a new password</h1><div style={{ display: "grid", gap: 14, marginTop: 24 }}><Input label="New password" type="password" value={password} onChange={event => setPassword(event.target.value)} /><Input label="Confirm password" type="password" value={confirm} onChange={event => setConfirm(event.target.value)} />{message && <p style={{ color: message.startsWith("Password reset") ? "var(--success)" : "var(--danger)", fontSize: 13 }}>{message}</p>}<Btn full size="lg" onClick={submit} disabled={loading || !token}>{loading ? "Saving…" : "Set new password"}</Btn></div></main>;
 }
 
 // APP INITIALIZER — attempts silent refresh on load
@@ -2393,6 +2496,7 @@ export default function Storefront() {
   const reduxDispatch = useReduxDispatch();
 
   useEffect(() => {
+    if (new URLSearchParams(window.location.search).has("reset_token")) dispatch({ type: "NAVIGATE", page: "resetPassword" });
     window.scrollTo({ top: 0, behavior: "auto" });
     const sections = document.querySelectorAll("[data-reveal]");
     if (!('IntersectionObserver' in window) || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -2507,6 +2611,7 @@ export default function Storefront() {
         if (state.ui.page === "checkout") return <CheckoutPage {...pageProps} />;
         return <OrdersPage {...pageProps} />;
       case "orderSuccess": return <OrderSuccessPage {...pageProps} />;
+      case "resetPassword": return <ResetPasswordPage dispatch={dispatch} />;
       case "delivery":     { window.location.href = "/delivery/dashboard"; return null; }
       default:             return <HomePage {...pageProps} />;
     }

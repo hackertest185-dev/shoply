@@ -10,6 +10,7 @@ from app.schemas.admin_schema import CompleteDeliveryRequest, ProductRejectReque
 from app.schemas.delivery_schema import AgentRejectRequest
 from app.services import admin_service, verification_service
 from app.services.audit_log_service import write_audit_log
+from app.services.email_service import email_is_configured, send_order_email
 from datetime import datetime, timezone
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -112,7 +113,7 @@ async def mark_whatsapp_contacted(
             "admin_contacted_at": contacted_at,
             "admin_contacted_by": current_user["user_id"],
             "updated_at": contacted_at,
-        }},
+        }, "$push": {"status_history": {"status": "contacted", "at": contacted_at, "by": current_user["user_id"]}}},
         return_document=ReturnDocument.AFTER,
     )
     if not order:
@@ -132,6 +133,12 @@ async def mark_whatsapp_contacted(
         {"whatsapp_number": order.get("whatsapp_number")},
         request.client.host if request.client else None,
     )
+    customer = await db.users.find_one({"_id": order.get("customer_id")}, {"email": 1})
+    if customer and email_is_configured():
+        try:
+            await send_order_email(customer["email"], f"Shoply order #{order_id[-8:]} update", "The Shoply team contacted you on WhatsApp about your order.")
+        except Exception:
+            pass
     return _ok({
         "order_id": order_id,
         "contact_status": "contacted",
@@ -168,7 +175,7 @@ async def complete_delivery(
             "delivered_at": now,
             "delivered_by": current_user["user_id"],
             "updated_at": now,
-        }},
+        }, "$push": {"status_history": {"status": "delivered", "at": now, "by": current_user["user_id"]}}},
         return_document=ReturnDocument.AFTER,
     )
     if not order:
@@ -183,6 +190,12 @@ async def complete_delivery(
         "orders", order_id, {"total": order.get("total"), "payment_method": "instapay"},
         request.client.host if request.client else None,
     )
+    customer = await db.users.find_one({"_id": order.get("customer_id")}, {"email": 1})
+    if customer and email_is_configured():
+        try:
+            await send_order_email(customer["email"], f"Shoply order #{order_id[-8:]} delivered", f"Your order was delivered and payment was confirmed. Total: {order.get('total', 0):.2f} EGP. Your receipt is now available in your account.")
+        except Exception:
+            pass
     return _ok({
         "order_id": order_id,
         "status": "delivered",
@@ -267,7 +280,11 @@ async def cancel_order_admin(
         db, order_id,
         status="cancelled",
         delivery_status="cancelled",
+        extra={"cancelled_at": datetime.now(timezone.utc)},
     )
+    if order.get("stock_reserved") and not order.get("stock_restored"):
+        await order_model.restore_stock(db, order.get("items", []))
+        await db.orders.update_one({"_id": ObjectId(order_id)}, {"$set": {"stock_restored": True}})
 
     await write_audit_log(
         db, current_user["user_id"], "admin", "order_cancelled",

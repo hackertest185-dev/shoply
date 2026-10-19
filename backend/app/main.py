@@ -28,6 +28,8 @@ from app.routers import (
     delivery_router,
     admin_router,
     wishlist_router,
+    coupons_router,
+    chat_router,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -147,3 +149,5 @@ if settings.ENABLE_LEGACY_DELIVERY:
     app.include_router(delivery_router.router, prefix=PREFIX)
 app.include_router(admin_router.router,    prefix=PREFIX)
 app.include_router(wishlist_router.router, prefix=PREFIX)
+app.include_router(coupons_router.router, prefix=PREFIX)
+app.include_router(chat_router.router, prefix=PREFIX)

@@ -61,6 +61,7 @@ class Settings(BaseSettings):
     SENDGRID_API_KEY: str = ""
     EMAIL_FROM: str = "noreply@shoply.com"
     EMAIL_FROM_NAME: str = "Shoply"
+    FRONTEND_URL: str = "https://shoply-adh.pages.dev"
 
     # ── Gmail SMTP (email OTP) ───────────────────────────────────────────────
     # Use a Gmail App Password here, never the normal Gmail password.

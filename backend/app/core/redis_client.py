@@ -4,6 +4,7 @@ Async Redis connection via redis-py.
 Handles OTP storage (bcrypt-hashed, TTL-bound) and rate-limit counters.
 """
 import json
+import hashlib
 from typing import Any
 
 import redis.asyncio as aioredis
@@ -45,6 +46,7 @@ OTP_LOCK_KEY_PREFIX = "otp_lock:"
 EMAIL_OTP_KEY_PREFIX = "email_otp:"
 EMAIL_OTP_ATTEMPTS_KEY_PREFIX = "email_otp_attempts:"
 EMAIL_OTP_LOCK_KEY_PREFIX = "email_otp_lock:"
+PASSWORD_RESET_KEY_PREFIX = "password_reset:"
 
 
 async def store_otp(order_id: str, otp_plaintext: str) -> None:
@@ -145,6 +147,22 @@ async def delete_email_otp(email: str) -> None:
     await redis.delete(f"{EMAIL_OTP_KEY_PREFIX}{key}")
     await redis.delete(f"{EMAIL_OTP_ATTEMPTS_KEY_PREFIX}{key}")
     await redis.delete(f"{EMAIL_OTP_LOCK_KEY_PREFIX}{key}")
+
+
+async def store_password_reset_token(token: str, user_id: str, ttl: int = 1800) -> None:
+    redis = get_redis()
+    digest = hashlib.sha256(token.encode()).hexdigest()
+    await redis.set(f"{PASSWORD_RESET_KEY_PREFIX}{digest}", user_id, ex=ttl)
+
+
+async def consume_password_reset_token(token: str) -> str | None:
+    redis = get_redis()
+    digest = hashlib.sha256(token.encode()).hexdigest()
+    key = f"{PASSWORD_RESET_KEY_PREFIX}{digest}"
+    value = await redis.get(key)
+    if value:
+        await redis.delete(key)
+    return value
 
 
 # ── Generic cache helpers ─────────────────────────────────────────────────────

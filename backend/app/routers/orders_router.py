@@ -34,10 +34,22 @@ async def request_order(
     if cart["warnings"] or any(not item["in_stock"] for item in cart["items"]):
         raise HTTPException(status_code=409, detail={"code": "CART_UNAVAILABLE", "message": "Update your cart before ordering."})
 
-    result = await orders_service.create_contact_request(
-        db, current_user["user_id"], body.whatsapp_number, cart,
-        request.client.host if request.client else "unknown",
-    )
+    try:
+        result = await orders_service.create_contact_request(
+            db, current_user["user_id"], body.whatsapp_number, cart,
+            request.client.host if request.client else "unknown",
+            body.coupon_code,
+        )
+    except ValueError as exc:
+        code = str(exc)
+        messages = {
+            "INSUFFICIENT_STOCK": "One or more items went out of stock. Refresh your cart.",
+            "COUPON_INVALID": "This coupon is not valid.",
+            "COUPON_EXPIRED": "This coupon has expired.",
+            "COUPON_EXHAUSTED": "This coupon has reached its usage limit.",
+            "COUPON_MINIMUM": "Your order does not reach the coupon minimum.",
+        }
+        raise HTTPException(status_code=409, detail={"code": code, "message": messages.get(code, "Could not create the order.")})
     await cart_service.clear_cart(db, current_user["user_id"])
     return _ok(result)
 

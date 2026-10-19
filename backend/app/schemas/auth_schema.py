@@ -62,6 +62,7 @@ class EmailOtpVerifyRequest(BaseModel):
 
 class ResetPasswordRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    token: str = Field(..., min_length=20, max_length=256)
     new_password: str = Field(..., min_length=8, max_length=72)
 
 
