@@ -4,6 +4,23 @@ Append-only audit log. No update or delete operations exist.
 """
 from datetime import datetime, timezone
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from app.core.request_context import request_id_context
+
+_SENSITIVE_KEYS = {
+    "password", "password_hash", "otp", "token", "access_token", "refresh_token",
+    "authorization", "cookie", "signed_url", "proof_url", "whatsapp_number",
+}
+
+
+def _redact(value):
+    if isinstance(value, dict):
+        return {
+            str(key): ("[REDACTED]" if str(key).lower() in _SENSITIVE_KEYS else _redact(item))
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_redact(item) for item in value]
+    return value
 
 
 async def append_log(
@@ -23,7 +40,8 @@ async def append_log(
         "action":       action,
         "target_entity": target_entity,
         "target_id":    target_id,
-        "metadata":     metadata or {},
+        "metadata":     _redact(metadata or {}),
         "ip":           ip,
+        "request_id":   request_id_context.get(),
         "created_at":   datetime.now(timezone.utc),
     })

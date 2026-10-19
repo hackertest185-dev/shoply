@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from app.core.input_security import ensure_finite
 
 
 class CouponCreate(BaseModel):
@@ -24,9 +25,15 @@ class CouponCreate(BaseModel):
     @field_validator("value")
     @classmethod
     def validate_value(cls, value: float, info):
+        ensure_finite(value)
         if info.data.get("discount_type") == "percent" and value > 100:
             raise ValueError("Percent discount cannot exceed 100")
         return round(value, 2)
+
+    @field_validator("min_order_total")
+    @classmethod
+    def finite_minimum(cls, value: float) -> float:
+        return float(ensure_finite(value))
 
 
 class CouponUpdate(BaseModel):
@@ -38,8 +45,18 @@ class CouponUpdate(BaseModel):
     expires_at: datetime | None = None
     active: bool | None = None
 
+    @field_validator("value", "min_order_total")
+    @classmethod
+    def finite_updates(cls, value: float | None) -> float | None:
+        return None if value is None else float(ensure_finite(value))
+
 
 class CouponValidateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     code: str = Field(..., min_length=3, max_length=32)
     subtotal: float = Field(..., ge=0)
+
+    @field_validator("subtotal")
+    @classmethod
+    def finite_subtotal(cls, value: float) -> float:
+        return float(ensure_finite(value))

@@ -6,6 +6,8 @@ and manages DB/Redis lifecycle via startup/shutdown events.
 """
 import uuid
 import logging
+import re
+from urllib.parse import urlparse
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -18,6 +20,7 @@ from slowapi.util import get_remote_address
 from app.core.config import settings
 from app.core.database import connect_db, close_db, get_db
 from app.core.redis_client import connect_redis, close_redis, get_redis
+from app.core.request_context import request_id_context
 from app.routers import (
     auth_router,
     products_router,
@@ -34,6 +37,7 @@ from app.routers import (
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("shoply")
+_REQUEST_ID = re.compile(r"^[A-Za-z0-9._:-]{1,100}$")
 
 
 # ── Lifespan (startup + shutdown) ─────────────────────────────────────────────
@@ -87,26 +91,37 @@ async def add_security_headers(request: Request, call_next):
     } and request.cookies.get("refresh_token"):
         origin = request.headers.get("origin")
         referer = request.headers.get("referer")
-        trusted = set(settings.ALLOWED_ORIGINS)
-        if origin not in trusted and not any(referer and referer.startswith(item) for item in trusted):
+        trusted = {urlparse(item).scheme + "://" + (urlparse(item).netloc or "") for item in settings.ALLOWED_ORIGINS}
+        referer_origin = None
+        if referer:
+            parsed_referer = urlparse(referer)
+            referer_origin = f"{parsed_referer.scheme}://{parsed_referer.netloc}"
+        if origin not in trusted and referer_origin not in trusted:
             return JSONResponse(
                 status_code=403,
                 content={"success": False, "error": {"code": "CSRF_BLOCKED", "message": "Request origin is not trusted."}},
             )
     content_length = request.headers.get("content-length")
-    if content_length and content_length.isdigit() and int(content_length) > 12 * 1024 * 1024:
+    if content_length and content_length.isdigit() and int(content_length) > settings.MAX_REQUEST_BODY_BYTES:
         return JSONResponse(
             status_code=413,
             content={"success": False, "error": {"code": "REQUEST_TOO_LARGE", "message": "Request body is too large."}},
         )
-    request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
-    response = await call_next(request)
+    candidate_request_id = request.headers.get("X-Request-ID", "")
+    request_id = candidate_request_id if _REQUEST_ID.fullmatch(candidate_request_id) else str(uuid.uuid4())
+    context_token = request_id_context.set(request_id)
+    try:
+        response = await call_next(request)
+    finally:
+        request_id_context.reset(context_token)
     response.headers["X-Request-ID"]           = request_id
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"]        = "DENY"
     response.headers["Referrer-Policy"]        = "no-referrer"
+    response.headers["X-Permitted-Cross-Domain-Policies"] = "none"
     response.headers["Permissions-Policy"]     = "camera=(), microphone=(), geolocation=(), payment=()"
     response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
     response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
     if request.url.path.startswith(f"{PREFIX}/auth/"):
         response.headers["Cache-Control"] = "no-store"

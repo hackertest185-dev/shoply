@@ -28,6 +28,7 @@ botocore==1.35.86
 
 # ── Content sanitization ──────────────────────────────────
 bleach==6.4.0
+Pillow==11.2.1             # decode and re-encode uploads, stripping metadata
 
 # ── Customer receipts ────────────────────────────────────
 reportlab==4.4.4

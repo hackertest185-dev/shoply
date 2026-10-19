@@ -127,6 +127,9 @@ export const api = {
     create: (data)                 => apiClient.post('/products', data),
     update: (id, data)             => apiClient.patch(`/products/${id}`, data),
     delete: (id)                   => apiClient.delete(`/products/${id}`),
+    uploadImage: (formData)         => apiClient.post('/products/images', formData, {
+                                        headers: { 'Content-Type': 'multipart/form-data' },
+                                      }),
     mine:   (params)               => apiClient.get('/products/mine', { params }),
   },
   categories: {

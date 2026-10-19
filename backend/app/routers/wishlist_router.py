@@ -4,6 +4,7 @@ Customer wishlist — add/remove/list products.
 """
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
+from bson import ObjectId
 
 from app.core.database import get_db
 from app.dependencies.rbac_dependency import require_customer
@@ -25,6 +26,8 @@ async def list_wishlist(
     current_user: dict = Depends(require_customer),
     db=Depends(get_db),
 ):
+    if not ObjectId.is_valid(product_id):
+        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
     products = await wishlist_service.list_wishlist_products(db, current_user["user_id"])
     return _ok(products)
 
@@ -35,6 +38,8 @@ async def toggle_wishlist(
     current_user: dict = Depends(require_customer),
     db=Depends(get_db),
 ):
+    if not ObjectId.is_valid(product_id):
+        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
     result = await wishlist_service.toggle_wishlist(db, current_user["user_id"], product_id)
     return _ok(result)
 
@@ -45,6 +50,8 @@ async def remove_from_wishlist(
     current_user: dict = Depends(require_customer),
     db=Depends(get_db),
 ):
+    if not ObjectId.is_valid(product_id):
+        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
     removed = await wishlist_model.remove_item(db, current_user["user_id"], product_id)
     if not removed:
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})

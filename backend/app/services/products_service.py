@@ -1,18 +1,32 @@
 """services/products_service.py"""
+import base64
+import math
 import uuid
-
-import bleach
 from bson import ObjectId
 
+from app.core.input_security import clean_text, decode_data_image, is_allowed_image_url, normalize_image
 from app.models import product_model
 from app.services.audit_log_service import write_audit_log
 
-ALLOWED_HTML_TAGS = ["b", "i", "ul", "ol", "li", "a", "p", "br", "strong", "em"]
-ALLOWED_ATTRS = {"a": ["href"]}
-
-
 def _sanitize_description(raw: str) -> str:
-    return bleach.clean(raw, tags=ALLOWED_HTML_TAGS, attributes=ALLOWED_ATTRS, strip=True)
+    # Descriptions are rendered as React text.  Keeping them plain text avoids
+    # needing a second HTML sanitizer in every frontend surface.
+    return clean_text(raw, max_length=10_000)
+
+
+def _normalize_images(images: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for raw in images or []:
+        value = str(raw).strip()
+        if value.startswith("data:"):
+            content, _ = decode_data_image(value)
+            encoded, mime, _ = normalize_image(content)
+            normalized.append(f"data:{mime};base64,{base64.b64encode(encoded).decode('ascii')}")
+        elif is_allowed_image_url(value):
+            normalized.append(value)
+        else:
+            raise ValueError("UNSAFE_IMAGE_URL")
+    return normalized
 
 
 def _build_filters(params: dict) -> dict:
@@ -21,7 +35,7 @@ def _build_filters(params: dict) -> dict:
 
     if q := params.get("q"):
         # Text search — uses the text index; sanitized by $text operator
-        filters["$text"] = {"$search": str(q)[:100]}
+        filters["$text"] = {"$search": clean_text(str(q), max_length=100)}
 
     if category_id := params.get("category"):
         try:
@@ -56,14 +70,21 @@ def _build_filters(params: dict) -> dict:
 
 
 def _parse_sort(sort_str: str) -> tuple[str, int]:
-    if sort_str.startswith("-"):
-        return sort_str[1:], -1
-    return sort_str, 1
+    allowed = {"created_at", "updated_at", "name", "final_price", "price", "ratings.average"}
+    descending = sort_str.startswith("-")
+    field = sort_str[1:] if descending else sort_str
+    return (field if field in allowed else "created_at", -1 if descending else 1)
 
 
 async def list_products(db, params: dict) -> tuple[list[dict], int]:
-    page  = max(1, int(params.get("page", 1)))
-    limit = min(100, max(1, int(params.get("limit", 20))))
+    try:
+        page = max(1, int(params.get("page", 1)))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        limit = min(100, max(1, int(params.get("limit", 20))))
+    except (TypeError, ValueError):
+        limit = 20
     skip  = (page - 1) * limit
     sort_field, sort_dir = _parse_sort(params.get("sort", "-created_at"))
     filters = _build_filters(params)
@@ -119,7 +140,12 @@ async def _enrich_products(db, products: list[dict]) -> list[dict]:
 
 
 async def create_product(db, admin_id: str, data: dict) -> str:
+    if not math.isfinite(float(data.get("price", 0))):
+        raise ValueError("INVALID_PRICE")
     data["description"] = _sanitize_description(data.get("description", ""))
+    data["name"] = clean_text(data.get("name", ""), max_length=200)
+    data["tags"] = [clean_text(tag, max_length=30) for tag in data.get("tags", [])]
+    data["images"] = _normalize_images(data.get("images", []))
     data["vendor_id"] = ObjectId(admin_id)
     data["category_id"] = ObjectId(data.pop("category_id"))
     data["status"] = "active"
@@ -158,9 +184,17 @@ async def update_product(
         raise ValueError("FORBIDDEN")
     if "description" in updates:
         updates["description"] = _sanitize_description(updates["description"])
+    if "name" in updates:
+        updates["name"] = clean_text(updates["name"], max_length=200)
+    if "tags" in updates:
+        updates["tags"] = [clean_text(tag, max_length=30) for tag in updates["tags"]]
+    if "images" in updates:
+        updates["images"] = _normalize_images(updates["images"])
     # Recompute final_price if price or discount changed
     price = updates.get("price", existing.get("price"))
     disc  = updates.get("discount_percent", existing.get("discount_percent", 0))
+    if not math.isfinite(float(price)) or not math.isfinite(float(disc)):
+        raise ValueError("INVALID_PRICE")
     updates["final_price"] = round(price * (1 - disc / 100), 2)
     await product_model.update_product(db, product_id, updates)
     await write_audit_log(

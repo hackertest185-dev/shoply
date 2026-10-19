@@ -158,6 +158,7 @@ async def authenticate_user(db, email: str, password: str, ip: str) -> dict:
                     "account_locked_until": datetime.now(timezone.utc)
                     + timedelta(minutes=LOCKOUT_MINUTES)
                 },
+                allow_sensitive=True,
             )
             await write_audit_log(
                 db,

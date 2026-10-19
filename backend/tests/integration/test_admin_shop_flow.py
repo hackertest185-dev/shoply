@@ -27,7 +27,7 @@ async def test_only_admin_can_publish_product_and_customer_can_request_order():
                 "description": "Headphones for the shop flow test",
                 "price": 25.0,
                 "category_id": str(category_id),
-                "images": ["data:image/png;base64,aGVsbG8="],
+                "images": ["data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="],
                 "variants": [{"sku": "TEST-HEADPHONES", "stock_qty": 3}],
             }
             denied = await client.post("/api/v1/products", json=product)

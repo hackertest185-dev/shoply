@@ -49,3 +49,10 @@ The free backend sleeps after inactivity. Redis only stores temporary OTP and ra
 - `client/src/Storefront.jsx`: customer storefront and admin product/order screens
 
 The repository also contains legacy delivery and Stripe modules. The current customer checkout uses the WhatsApp order request flow described above.
+
+## Security baseline
+
+Security controls and the production checklist are documented in
+[`backend/SECURITY.md`](backend/SECURITY.md). Product images should be sent
+through `POST /api/v1/products/images` as an admin; the API validates and
+normalizes them before a product stores the resulting image value.

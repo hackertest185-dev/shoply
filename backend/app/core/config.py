@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     ADMIN_ACCESS_TOKEN_EXPIRE_MINUTES: int = 10
     ADMIN_REFRESH_TOKEN_EXPIRE_DAYS: int = 1
     PASSWORD_MIN_LENGTH: int = 12
+    MAX_REQUEST_BODY_BYTES: int = 12 * 1024 * 1024
+    PRODUCT_IMAGE_MAX_BYTES: int = 6 * 1024 * 1024
+    DELIVERY_DOCUMENT_MAX_BYTES: int = 10 * 1024 * 1024
+    DELIVERY_PROOF_MAX_BYTES: int = 15 * 1024 * 1024
 
     # ── Stripe ────────────────────────────────────────────────────────────────
     STRIPE_SECRET_KEY: str = ""
@@ -107,7 +111,11 @@ class Settings(BaseSettings):
             )
         if self.DEBUG:
             raise RuntimeError("DEBUG must be false in production or staging.")
-        if not self.ALLOWED_ORIGINS or any(origin.strip() == "*" for origin in self.ALLOWED_ORIGINS):
+        if (
+            not self.ALLOWED_ORIGINS
+            or any(origin.strip() == "*" for origin in self.ALLOWED_ORIGINS)
+            or any(not origin.strip().startswith("https://") for origin in self.ALLOWED_ORIGINS)
+        ):
             raise RuntimeError("ALLOWED_ORIGINS must contain explicit HTTPS origins.")
         if self.ADMIN_MFA_REQUIRED and self.ADMIN_MFA_TTL_SECONDS > 900:
             raise RuntimeError("ADMIN_MFA_TTL_SECONDS must be 15 minutes or less.")

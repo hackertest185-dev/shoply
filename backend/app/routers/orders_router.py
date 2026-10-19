@@ -1,5 +1,6 @@
 """routers/orders_router.py"""
 import uuid
+import re
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from bson import ObjectId
@@ -34,11 +35,15 @@ async def request_order(
     if cart["warnings"] or any(not item["in_stock"] for item in cart["items"]):
         raise HTTPException(status_code=409, detail={"code": "CART_UNAVAILABLE", "message": "Update your cart before ordering."})
 
+    idempotency_key = request.headers.get("Idempotency-Key")
+    if idempotency_key and not re.fullmatch(r"[A-Za-z0-9._:-]{16,128}", idempotency_key):
+        raise HTTPException(status_code=422, detail={"code": "INVALID_IDEMPOTENCY_KEY"})
     try:
         result = await orders_service.create_contact_request(
             db, current_user["user_id"], body.whatsapp_number, cart,
             request.client.host if request.client else "unknown",
             body.coupon_code,
+            idempotency_key,
         )
     except ValueError as exc:
         code = str(exc)

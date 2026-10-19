@@ -8,6 +8,11 @@ def _serialize(doc: dict) -> dict:
     if not doc:
         return doc
     doc["id"] = str(doc.pop("_id"))
+    # Storage keys are never sent to browsers.  A future proof-download route
+    # must authorize the order first and mint a short-lived signed URL.
+    doc.pop("proof_of_delivery_key", None)
+    doc.pop("proof_of_delivery_url", None)
+    doc.pop("payment_intent_id", None)
     if "customer_id" in doc:
         doc["customer_id"] = str(doc["customer_id"])
     if "delivery_id" in doc and doc["delivery_id"]:

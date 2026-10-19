@@ -41,10 +41,7 @@ async def validate_otp(
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Order not found."})
 
     if str(order.get("delivery_id", "")) != current_user["user_id"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"code": "FORBIDDEN", "message": "You are not assigned to this order."},
-        )
+        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Order not found."})
 
     if order.get("delivery_status") not in ("assigned", "otp_verified", "out_for_delivery"):
         raise HTTPException(

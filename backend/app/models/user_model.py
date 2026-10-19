@@ -59,8 +59,27 @@ async def insert_user(db: AsyncIOMotorDatabase, data: dict) -> str:
     return str(result.inserted_id)
 
 
-async def update_user(db: AsyncIOMotorDatabase, user_id: str, updates: dict) -> None:
-    """Partial update. Automatically sets updated_at."""
+_SENSITIVE_USER_FIELDS = {
+    "role", "password_hash", "auth_version", "is_verified", "status",
+    "failed_login_count", "account_locked_until", "verification_token",
+    "verification_token_expires",
+}
+
+
+async def update_user(
+    db: AsyncIOMotorDatabase,
+    user_id: str,
+    updates: dict,
+    *,
+    allow_sensitive: bool = False,
+) -> None:
+    """Partial update with an explicit guard for identity/security fields."""
+    if not ObjectId.is_valid(user_id):
+        raise ValueError("INVALID_USER_ID")
+    if not allow_sensitive and _SENSITIVE_USER_FIELDS.intersection(updates):
+        raise ValueError("SENSITIVE_USER_UPDATE_FORBIDDEN")
+    if any(str(key).startswith("$") or "." in str(key) for key in updates):
+        raise ValueError("INVALID_USER_UPDATE")
     updates["updated_at"] = datetime.now(timezone.utc)
     await db.users.update_one(
         {"_id": ObjectId(user_id)},

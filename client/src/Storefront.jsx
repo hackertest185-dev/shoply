@@ -4,6 +4,19 @@ import { logoutUser } from './features/auth/authSlice';
 
 const formatMoney = amount => `${Number(amount || 0).toLocaleString('en-EG', { maximumFractionDigits: 2 })} EGP`;
 
+const SAFE_IMAGE_HOSTS = new Set(['images.unsplash.com']);
+function safeImageSource(value, fallback = '') {
+  if (typeof value !== 'string' || !value.trim()) return fallback;
+  const raw = value.trim();
+  if (raw.startsWith('/') && !raw.startsWith('//')) return raw;
+  if (/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/i.test(raw)) return raw;
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol === 'https:' && (SAFE_IMAGE_HOSTS.has(parsed.hostname) || parsed.hostname.endsWith('.s3.amazonaws.com'))) return raw;
+  } catch { /* invalid URL */ }
+  return fallback;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // DESIGN TOKENS & GLOBAL STYLES
 // ─────────────────────────────────────────────────────────────────────────────
@@ -211,7 +224,10 @@ function setAccessToken(t) { _accessToken = t; }
 function setAuthDispatch(d) { _authDispatch = d; }
 
 function genRequestId() {
-  return "req_" + Math.random().toString(36).slice(2, 12).toUpperCase();
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  globalThis.crypto?.getRandomValues?.(bytes);
+  return "req_" + Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
 }
 
 async function silentRefresh() {
@@ -330,6 +346,7 @@ const api = {
     create: (body)        => apiFetch("/products",             { method: "POST", body }),
     update: (id, body)    => apiFetch(`/products/${id}`,       { method: "PATCH", body }),
     delete: (id)          => apiFetch(`/products/${id}`,       { method: "DELETE" }),
+    uploadImage: (form)   => apiFetch("/products/images",      { method: "POST", body: form, isFormData: true }),
     manage: (params = {}) => apiFetch("/products/manage?" + new URLSearchParams(params)),
     reviews: {
       list:   (id, p) => apiFetch(`/products/${id}/reviews?` + new URLSearchParams(p)),
@@ -1142,7 +1159,7 @@ function CartDrawer({ state, dispatch }) {
             }}>
               <div style={{ width: "64px", height: "64px", borderRadius: "var(--radius-sm)", overflow: "hidden", flexShrink: 0 }}>
                 {item.image ? (
-                  <img src={item.image} alt={item.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  <img src={safeImageSource(item.image)} alt={item.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                 ) : (
                   <div style={{ width: "100%", height: "100%", background: "var(--navy-border)" }} />
                 )}
@@ -1234,8 +1251,8 @@ function ProductCard({ product, dispatch, onAddToCart }) {
       onKeyDown={e => { if (e.key === "Enter") dispatch({ type: "NAVIGATE", page: "product", params: { id: product.id } }); }}>
       {/* Image */}
       <div style={{ position: "relative", paddingTop: "72%", overflow: "hidden", background: "var(--navy-mid)" }}>
-        {product.images?.[0] ? (
-          <img src={product.images[0]} alt={product.name} loading="lazy" decoding="async" style={{
+        {safeImageSource(product.images?.[0]) ? (
+          <img src={safeImageSource(product.images[0])} alt={product.name} loading="lazy" decoding="async" style={{
             position: "absolute", inset: 0, width: "100%", height: "100%",
             objectFit: "cover", transition: "transform 0.4s ease",
           }} />
@@ -1716,7 +1733,9 @@ function ProductDetailPage({ state, dispatch, onAddToCart }) {
     </main>
   );
 
-  const images = product.images?.length ? product.images : ["https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=800&q=80"];
+  const images = product.images?.map(image => safeImageSource(image)).filter(Boolean).length
+    ? product.images.map(image => safeImageSource(image)).filter(Boolean)
+    : ["https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=800&q=80"];
 
   return (
     <main style={{ maxWidth: "1280px", margin: "0 auto", padding: "32px 24px 80px" }}>
@@ -1742,7 +1761,7 @@ function ProductDetailPage({ state, dispatch, onAddToCart }) {
         {/* Image gallery */}
         <div>
           <div style={{ borderRadius: "var(--radius)", overflow: "hidden", background: "var(--navy-card)", border: "1px solid var(--navy-border)", aspectRatio: "1", marginBottom: "12px" }}>
-            <img src={images[imgIdx]} alt={product.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            <img src={safeImageSource(images[imgIdx])} alt={product.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
           </div>
           {images.length > 1 && (
             <div style={{ display: "flex", gap: "8px" }}>
@@ -1752,7 +1771,7 @@ function ProductDetailPage({ state, dispatch, onAddToCart }) {
                   border: `2px solid ${i === imgIdx ? "var(--amber)" : "var(--navy-border)"}`,
                   cursor: "pointer", padding: 0, background: "var(--navy-card)", transition: "border-color var(--transition)",
                 }}>
-                  <img src={img} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  <img src={safeImageSource(img)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                 </button>
               ))}
             </div>
@@ -2137,21 +2156,28 @@ function AdminProducts({ dispatch }) {
     setShowForm(true);
   };
 
-  const selectImage = (event) => {
+  const selectImage = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    if (!file.type.startsWith("image/")) {
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
       setError("Choose a JPEG, PNG, or WebP image.");
       return;
     }
-    if (file.size > 2_500_000) {
-      setError("Image must be smaller than 2.5 MB.");
+    if (file.size > 6_000_000) {
+      setError("Image must be smaller than 6 MB.");
       return;
     }
-    const reader = new FileReader();
-    reader.onload = () => setForm(current => ({ ...current, image_data: String(reader.result), image_name: file.name }));
-    reader.onerror = () => setError("Could not read the image file.");
-    reader.readAsDataURL(file);
+    setSaving(true);
+    setError("");
+    const payload = new FormData();
+    payload.append("image", file, "product-image");
+    const res = await api.products.uploadImage(payload);
+    setSaving(false);
+    if (!res.success) {
+      setError(res.error?.message || "Could not validate the image.");
+      return;
+    }
+    setForm(current => ({ ...current, image_data: res.data.image, image_name: "Validated image" }));
   };
 
   const reload = async () => {
@@ -2219,7 +2245,7 @@ function AdminProducts({ dispatch }) {
         <div style={{ display: "grid", gap: 10 }}>
           {products.map(product => (
             <div key={product.id} className="shop-admin-product-row" style={{ display: "flex", alignItems: "center", gap: 16, padding: 14, background: "var(--navy-card)", border: "1px solid var(--navy-border)", borderRadius: "var(--radius)" }}>
-              {product.images?.[0] && <img src={product.images[0]} alt="" style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 6 }} />}
+              {safeImageSource(product.images?.[0]) && <img src={safeImageSource(product.images[0])} alt="" style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 6 }} />}
               <div style={{ flex: 1, minWidth: 0 }}>
                 <strong>{product.name}</strong>
                 <div style={{ color: "var(--muted)", fontSize: 13 }}>{formatMoney(product.final_price ?? product.price)} · {product.status}</div>
@@ -2241,7 +2267,7 @@ function AdminProducts({ dispatch }) {
             <input type="file" accept="image/jpeg,image/png,image/webp" onChange={selectImage} style={{ width: "100%", color: "var(--white)", padding: 10, border: "1px solid var(--navy-border)", borderRadius: 8, background: "var(--navy-card)" }} />
             {form.image_data && (
               <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 10 }}>
-                <img src={form.image_data} alt="Preview" style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 8, border: "1px solid var(--navy-border)" }} />
+                <img src={safeImageSource(form.image_data)} alt="Preview" style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 8, border: "1px solid var(--navy-border)" }} />
                 <div style={{ color: "var(--muted)", fontSize: 12, flex: 1 }}>{form.image_name}</div>
                 <Btn size="sm" variant="ghost" onClick={() => setForm(current => ({ ...current, image_data: "", image_name: "" }))}>Remove</Btn>
               </div>

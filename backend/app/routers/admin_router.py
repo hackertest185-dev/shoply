@@ -332,6 +332,8 @@ async def approve_product(
     current_user: dict = Depends(require_admin),
     db=Depends(get_db),
 ):
+    if not ObjectId.is_valid(product_id):
+        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
     from app.models import product_model
     await product_model.update_product(db, product_id, {"status": "active"})
     await write_audit_log(
@@ -349,6 +351,8 @@ async def reject_product(
     current_user: dict = Depends(require_admin),
     db=Depends(get_db),
 ):
+    if not ObjectId.is_valid(product_id):
+        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
     from app.models import product_model
     await product_model.update_product(db, product_id, {"status": "inactive", "rejection_reason": body.reason})
     await write_audit_log(
@@ -419,9 +423,14 @@ async def get_agent_documents(
     current_user: dict = Depends(require_admin),
     db=Depends(get_db),
 ):
-    docs = await verification_service.get_agent_documents_with_signed_urls(
-        db, agent_id, current_user["user_id"]
-    )
+    if not ObjectId.is_valid(agent_id):
+        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
+    try:
+        docs = await verification_service.get_agent_documents_with_signed_urls(
+            db, agent_id, current_user["user_id"]
+        )
+    except ValueError:
+        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
     return _ok(docs)
 
 
@@ -432,8 +441,13 @@ async def approve_delivery_agent(
     current_user: dict = Depends(require_admin),
     db=Depends(get_db),
 ):
+    if not ObjectId.is_valid(agent_id):
+        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
     ip = request.client.host if request.client else None
-    await verification_service.approve_agent(db, agent_id, current_user["user_id"], ip)
+    try:
+        await verification_service.approve_agent(db, agent_id, current_user["user_id"], ip)
+    except ValueError:
+        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
     return _ok({"message": "Delivery agent approved."})
 
 
@@ -445,10 +459,15 @@ async def reject_delivery_agent(
     current_user: dict = Depends(require_admin),
     db=Depends(get_db),
 ):
+    if not ObjectId.is_valid(agent_id):
+        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
     ip = request.client.host if request.client else None
-    await verification_service.reject_agent(
-        db, agent_id, current_user["user_id"], body.rejection_reason, ip
-    )
+    try:
+        await verification_service.reject_agent(
+            db, agent_id, current_user["user_id"], body.rejection_reason, ip
+        )
+    except ValueError:
+        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
     return _ok({"message": "Delivery agent rejected."})
 
 

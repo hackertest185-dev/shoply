@@ -83,6 +83,9 @@ async def _create_indexes() -> None:
         background=True,
     )
     await db.orders.create_index("payment_intent_id", unique=True, sparse=True, background=True)
+    await db.orders.create_index(
+        [("customer_id", 1), ("idempotency_key", 1)], unique=True, sparse=True, background=True
+    )
 
     # Carts
     await db.carts.create_index("user_id", unique=True, background=True)

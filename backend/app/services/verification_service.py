@@ -3,6 +3,7 @@ services/verification_service.py  ★
 Delivery agent document upload, status transitions, and admin review logic.
 """
 from datetime import datetime, timezone
+from bson import ObjectId
 
 from app.core.s3_client import (
     generate_signed_url,
@@ -74,6 +75,9 @@ async def get_agent_documents_with_signed_urls(
     Return signed S3 URLs for all documents (15-min expiry).
     Writes audit log because admin is viewing sensitive PII.
     """
+    agent = await db.users.find_one({"_id": ObjectId(user_id), "role": "delivery"}, {"_id": 1})
+    if not agent:
+        raise ValueError("NOT_FOUND")
     docs = await delivery_document_model.find_by_user(db, user_id)
     result = []
     for doc in docs:
@@ -81,6 +85,7 @@ async def get_agent_documents_with_signed_urls(
             settings.S3_BUCKET_DELIVERY_DOCS,
             doc["file_url"],
             expiry_seconds=900,
+            download=True,
         )
         result.append({
             "id":              doc["id"],
@@ -100,6 +105,8 @@ async def get_agent_documents_with_signed_urls(
 
 async def approve_agent(db, agent_id: str, admin_id: str, ip: str) -> None:
     """Set verification_status = approved. Notify agent (TODO: email)."""
+    if not ObjectId.is_valid(agent_id) or not await db.users.find_one({"_id": ObjectId(agent_id), "role": "delivery"}, {"_id": 1}):
+        raise ValueError("NOT_FOUND")
     await user_model.update_user(
         db, agent_id,
         {"verification_status": "approved", "rejection_reason": None},
@@ -113,6 +120,8 @@ async def reject_agent(
     db, agent_id: str, admin_id: str, rejection_reason: str, ip: str
 ) -> None:
     """Set verification_status = rejected with reason. Notify agent (TODO: email)."""
+    if not ObjectId.is_valid(agent_id) or not await db.users.find_one({"_id": ObjectId(agent_id), "role": "delivery"}, {"_id": 1}):
+        raise ValueError("NOT_FOUND")
     await user_model.update_user(
         db, agent_id,
         {
@@ -146,14 +155,14 @@ async def confirm_delivery(
         status="delivered",
         delivery_status="delivered",
         extra={
-            "proof_of_delivery_url": proof_url,
+            "proof_of_delivery_key": proof_url,
             "delivered_at": datetime.now(timezone.utc),
         },
     )
 
     await write_audit_log(
         db, agent_id, "delivery", "delivery_confirmed", "orders", order_id,
-        {"proof_url": proof_url}, ip,
+        {"proof_stored": True}, ip,
     )
 
     # TODO: Send delivery confirmation email to customer
@@ -161,7 +170,7 @@ async def confirm_delivery(
     return {
         "order_id":              order_id,
         "delivery_status":       "delivered",
-        "proof_of_delivery_url": proof_url,
+        "proof_available": True,
         "completed_at":          datetime.now(timezone.utc).isoformat(),
         "message":               "Delivery confirmed. Customer has been notified.",
     }

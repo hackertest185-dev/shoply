@@ -3,6 +3,8 @@ from enum import Enum
 from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.core.input_security import clean_text, ensure_finite, is_allowed_image_url
+
 
 def _validate_images(value: list[str]) -> list[str]:
     """Keep inline uploads bounded so a single product cannot exhaust MongoDB."""
@@ -13,6 +15,12 @@ def _validate_images(value: list[str]) -> list[str]:
             ("data:image/jpeg;base64,", "data:image/png;base64,", "data:image/webp;base64,")
         ):
             raise ValueError("Only JPEG, PNG, and WebP images are supported.")
+        if image.startswith("data:"):
+            # Data images are accepted for backwards compatibility, but are
+            # decoded and re-encoded by the service before persistence.
+            continue
+        if not is_allowed_image_url(image):
+            raise ValueError("Image URL is not from an approved HTTPS host.")
     return value
 
 
@@ -46,6 +54,16 @@ class ProductCreate(BaseModel):
 
     _validate_image_values = field_validator("images")(_validate_images)
 
+    @field_validator("price")
+    @classmethod
+    def price_must_be_finite(cls, value: float) -> float:
+        return float(ensure_finite(value))
+
+    @field_validator("name", "description")
+    @classmethod
+    def plain_text_fields(cls, value: str) -> str:
+        return clean_text(value)
+
     @classmethod
     def validate_tags(cls, v: list[str]) -> list[str]:
         return [t[:30] for t in v]  # cap tag length
@@ -63,8 +81,26 @@ class ProductUpdate(BaseModel):
 
     _validate_image_values = field_validator("images")(_validate_images)
 
+    @field_validator("price")
+    @classmethod
+    def price_must_be_finite(cls, value: float | None) -> float | None:
+        return None if value is None else float(ensure_finite(value))
+
+    @field_validator("name", "description")
+    @classmethod
+    def plain_text_fields(cls, value: str | None) -> str | None:
+        return None if value is None else clean_text(value)
+
 
 class ReviewCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     rating: int = Field(..., ge=1, le=5)
     body:   str = Field(..., min_length=10, max_length=2000)
+
+    @field_validator("body")
+    @classmethod
+    def plain_text_body(cls, value: str) -> str:
+        value = clean_text(value, max_length=2000)
+        if len(value) < 10:
+            raise ValueError("Review is too short")
+        return value

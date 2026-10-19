@@ -13,7 +13,7 @@ from slowapi.util import get_remote_address
 from app.core.database import get_db
 from app.core.config import settings
 from app.core.security import hash_password, verify_password
-from app.core.redis_client import store_email_otp, verify_email_otp, delete_email_otp, store_password_reset_token, consume_password_reset_token
+from app.core.redis_client import store_email_otp, verify_email_otp, delete_email_otp, store_password_reset_token, consume_password_reset_token, consume_rate_limit
 from app.dependencies.auth_dependency import get_current_user
 from app.dependencies.rbac_dependency import require_customer
 from app.schemas.auth_schema import (
@@ -116,6 +116,8 @@ async def request_email_otp(
             detail=_error("EMAIL_NOT_CONFIGURED", "Email OTP is not configured yet. Add the Gmail App Password to the backend environment."),
         )
     email = str(body.email).lower().strip()
+    if not await consume_rate_limit("email-otp-request", email, 5, 60 * 60):
+        raise HTTPException(status_code=429, detail=_error("RATE_LIMITED", "Too many code requests. Try again later."))
     existing = await user_model.find_by_email(db, email)
     if body.mode == "register":
         if not body.name or len(body.name.strip()) < 2:
@@ -150,6 +152,8 @@ async def verify_email_otp_endpoint(
 ):
     """Verify the code and issue the regular Shoply session tokens."""
     email = str(body.email).lower().strip()
+    if not await consume_rate_limit("email-otp-verify", email, settings.EMAIL_OTP_MAX_ATTEMPTS + 2, settings.EMAIL_OTP_TTL_SECONDS):
+        raise HTTPException(status_code=429, detail=_error("RATE_LIMITED", "Too many verification attempts. Request a new code later."))
     result = await verify_email_otp(email, body.otp)
     if result.get("locked"):
         raise HTTPException(status_code=429, detail=_error("OTP_LOCKED", "Too many incorrect attempts. Request a new code."))
@@ -187,6 +191,9 @@ async def login(
     db=Depends(get_db),
 ):
     ip = request.client.host if request.client else "unknown"
+    email_key = str(body.email).lower().strip()
+    if not await consume_rate_limit("login-account", email_key, 10, 15 * 60):
+        raise HTTPException(status_code=429, detail=_error("RATE_LIMITED", "Too many sign-in attempts. Try again later."))
     try:
         result = await auth_service.authenticate_user(
             db, body.email, body.password, ip
@@ -231,6 +238,8 @@ async def verify_admin_mfa(
     db=Depends(get_db),
 ):
     ip = request.client.host if request.client else "unknown"
+    if not await consume_rate_limit("admin-mfa", body.challenge_id, settings.ADMIN_MFA_MAX_ATTEMPTS + 2, settings.ADMIN_MFA_TTL_SECONDS):
+        raise HTTPException(status_code=429, detail=_error("RATE_LIMITED", "Too many verification attempts. Try again later."))
     try:
         result = await auth_service.verify_admin_mfa(db, body.challenge_id, body.otp, ip)
     except ValueError as exc:
@@ -322,7 +331,7 @@ async def change_password(
         )
 
     new_hash = hash_password(body.new_password)
-    await user_model.update_user(db, current_user["user_id"], {"password_hash": new_hash})
+    await user_model.update_user(db, current_user["user_id"], {"password_hash": new_hash}, allow_sensitive=True)
     await user_model.bump_auth_version(db, current_user["user_id"])
     await auth_service.revoke_all_sessions(db, current_user["user_id"])
     await user_model.reset_failed_logins(db, current_user["user_id"])
@@ -366,7 +375,7 @@ async def reset_password(
     user = await db.users.find_one({"_id": ObjectId(user_id)})
     if not user or user.get("role") == "admin":
         raise HTTPException(status_code=400, detail=_error("RESET_TOKEN_INVALID", "This reset link is invalid or expired."))
-    await user_model.update_user(db, user_id, {"password_hash": hash_password(body.new_password)})
+    await user_model.update_user(db, user_id, {"password_hash": hash_password(body.new_password)}, allow_sensitive=True)
     await user_model.bump_auth_version(db, user_id)
     await auth_service.revoke_all_sessions(db, user_id)
     await user_model.reset_failed_logins(db, user_id)

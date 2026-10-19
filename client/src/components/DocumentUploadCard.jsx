@@ -2,7 +2,7 @@
  * components/DocumentUploadCard.jsx  ★
  * Single document upload field with status badge, file preview, and S3 progress.
  */
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 const STATUS_STYLES = {
   pending:  { color: '#dfbd89', bg: '#dfbd8922', label: 'Under Review' },
@@ -16,6 +16,10 @@ export function DocumentUploadCard({ label, name, accept, status = 'none', onFil
   const [filename, setFilename] = useState(null);
   const [preview,  setPreview]  = useState(null);
   const style = STATUS_STYLES[status] || STATUS_STYLES.none;
+
+  useEffect(() => () => {
+    if (preview) URL.revokeObjectURL(preview);
+  }, [preview]);
 
   const handleChange = (e) => {
     const file = e.target.files?.[0];

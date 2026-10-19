@@ -56,6 +56,23 @@ def _email_key(email: str) -> str:
     return hashlib.sha256(email.lower().strip().encode()).hexdigest()
 
 
+async def consume_rate_limit(bucket: str, identity: str, limit: int, window_seconds: int) -> bool:
+    """Small atomic-ish Redis counter for account/challenge-specific limits."""
+    try:
+        redis = get_redis()
+    except RuntimeError:
+        # The request still has slowapi's IP limiter.  This fallback keeps
+        # dependency-injected tests and emergency health endpoints usable;
+        # production readiness remains unhealthy until Redis is restored.
+        return True
+    digest = hashlib.sha256(str(identity).encode()).hexdigest()
+    key = f"rate:{bucket}:{digest}"
+    count = await redis.incr(key)
+    if count == 1:
+        await redis.expire(key, window_seconds)
+    return count <= limit
+
+
 async def store_otp(order_id: str, otp_plaintext: str) -> None:
     """
     Hash and store OTP in Redis with TTL.

@@ -1,6 +1,7 @@
 """routers/cart_router.py"""
 import uuid
 from fastapi import APIRouter, Depends, HTTPException
+from bson import ObjectId
 
 from app.core.database import get_db
 from app.dependencies.rbac_dependency import require_customer
@@ -53,6 +54,8 @@ async def update_item(
     current_user: dict = Depends(require_customer),
     db=Depends(get_db),
 ):
+    if not ObjectId.is_valid(product_id):
+        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
     data = await cart_service.update_item(
         db, current_user["user_id"], product_id, body.variant_id, body.qty
     )
@@ -65,6 +68,8 @@ async def remove_item(
     current_user: dict = Depends(require_customer),
     db=Depends(get_db),
 ):
+    if not ObjectId.is_valid(product_id):
+        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
     data = await cart_service.remove_item(db, current_user["user_id"], product_id)
     return _ok(data)
 

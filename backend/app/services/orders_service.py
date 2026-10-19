@@ -2,6 +2,7 @@
 import secrets
 
 from bson import ObjectId
+from pymongo.errors import DuplicateKeyError
 
 from app.core.redis_client import store_otp
 from app.models import order_model
@@ -16,8 +17,31 @@ def _generate_otp() -> str:
     return str(secrets.randbelow(10000)).zfill(4)
 
 
-async def create_contact_request(db, customer_id: str, whatsapp_number: str, cart: dict, ip: str, coupon_code: str | None = None) -> dict:
+async def create_contact_request(
+    db,
+    customer_id: str,
+    whatsapp_number: str,
+    cart: dict,
+    ip: str,
+    coupon_code: str | None = None,
+    idempotency_key: str | None = None,
+) -> dict:
     """Record an unpaid order request; the admin contacts the buyer on WhatsApp."""
+    if idempotency_key:
+        existing = await db.orders.find_one({
+            "customer_id": ObjectId(customer_id),
+            "idempotency_key": {"$eq": idempotency_key},
+        })
+        if existing:
+            return {
+                "order_id": str(existing["_id"]),
+                "status": existing.get("status"),
+                "payment_status": existing.get("payment_status"),
+                "total": existing.get("total", 0),
+                "discount_amount": existing.get("discount_amount", 0),
+                "items_count": existing.get("items_count", 0),
+                "message": "Order request already received.",
+            }
     items = [
         {
             "product_id": item["product_id"],
@@ -45,7 +69,7 @@ async def create_contact_request(db, customer_id: str, whatsapp_number: str, car
         if not coupon_doc or not await coupon_model.increment_usage(db, coupon_doc["_id"] if isinstance(coupon_doc.get("_id"), str) else str(coupon_doc["_id"])):
             await order_model.restore_stock(db, items)
             raise ValueError("COUPON_EXHAUSTED")
-    order_id = await order_model.insert_order(db, {
+    order_data = {
         "customer_id": ObjectId(customer_id),
         "delivery_id": None,
         "items": items,
@@ -65,7 +89,29 @@ async def create_contact_request(db, customer_id: str, whatsapp_number: str, car
         "coupon_code": coupon["code"] if coupon else None,
         "total": total,
         "stock_reserved": True,
-    })
+    }
+    if idempotency_key:
+        order_data["idempotency_key"] = idempotency_key
+    try:
+        order_id = await order_model.insert_order(db, order_data)
+    except DuplicateKeyError:
+        await order_model.restore_stock(db, items)
+        if idempotency_key:
+            existing = await db.orders.find_one({
+                "customer_id": ObjectId(customer_id),
+                "idempotency_key": {"$eq": idempotency_key},
+            })
+            if existing:
+                return {
+                    "order_id": str(existing["_id"]),
+                    "status": existing.get("status"),
+                    "payment_status": existing.get("payment_status"),
+                    "total": existing.get("total", 0),
+                    "discount_amount": existing.get("discount_amount", 0),
+                    "items_count": existing.get("items_count", 0),
+                    "message": "Order request already received.",
+                }
+        raise
     await write_audit_log(
         db, customer_id, "customer", "order_requested", "orders", order_id,
         {"items_count": len(items), "total": total, "discount": discount}, ip,

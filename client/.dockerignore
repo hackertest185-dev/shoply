@@ -1,8 +1,13 @@
 .env
+.env.*
 env
 node_modules/
 dist/
 .wrangler/
 .git/
+*.pem
+*.key
+coverage/
+test-results/
 Dockerfile
 .dockerignore

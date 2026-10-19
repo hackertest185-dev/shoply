@@ -8,6 +8,9 @@ RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 # ── Runtime stage ─────────────────────────────────────────
 FROM python:3.11-slim
 
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
 # Security: run as non-root user
 RUN addgroup --system shoply && adduser --system --group shoply
 

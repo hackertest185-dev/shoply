@@ -7,6 +7,7 @@ import uuid
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 
 from app.core.database import get_db
+from app.core.config import settings
 from app.dependencies.rbac_dependency import require_delivery
 from app.dependencies.verified_dependency import require_verified_delivery
 from app.dependencies.otp_dependency import validate_otp
@@ -14,8 +15,8 @@ from app.services import verification_service
 from app.models import order_model
 
 router = APIRouter(prefix="/delivery", tags=["Delivery"])
-MAX_DOC_SIZE  = 10 * 1024 * 1024   # 10 MB
-MAX_PROOF_SIZE = 15 * 1024 * 1024  # 15 MB
+MAX_DOC_SIZE  = settings.DELIVERY_DOCUMENT_MAX_BYTES
+MAX_PROOF_SIZE = settings.DELIVERY_PROOF_MAX_BYTES
 
 
 def _ok(data) -> dict:
@@ -120,7 +121,7 @@ async def start_delivery(
     if not order:
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
     if str(order.get("delivery_id", "")) != current_user["user_id"]:
-        raise HTTPException(status_code=403, detail={"code": "FORBIDDEN"})
+        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
     if order.get("delivery_status") != "assigned":
         raise HTTPException(
             status_code=409,
@@ -172,18 +173,21 @@ async def upload_proof(
     order = await order_model.find_by_id(db, order_id)
     if not order:
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
+    if str(order.get("delivery_id", "")) != current_user["user_id"]:
+        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
     if order.get("delivery_status") != "otp_verified":
         raise HTTPException(status_code=409, detail={"code": "CONFLICT", "message": "OTP must be verified before uploading proof."})
-    if str(order.get("delivery_id", "")) != current_user["user_id"]:
-        raise HTTPException(status_code=403, detail={"code": "FORBIDDEN"})
 
     content = await proof_photo.read(MAX_PROOF_SIZE + 1)
     if len(content) > MAX_PROOF_SIZE:
         raise HTTPException(status_code=400, detail={"code": "FILE_TOO_LARGE"})
 
     ip = request.client.host if request.client else "unknown"
-    result = await verification_service.confirm_delivery(
-        db, order_id, current_user["user_id"],
-        content, proof_photo.filename or "proof.jpg", ip,
-    )
+    try:
+        result = await verification_service.confirm_delivery(
+            db, order_id, current_user["user_id"],
+            content, proof_photo.filename or "proof.jpg", ip,
+        )
+    except ValueError:
+        raise HTTPException(status_code=415, detail={"code": "UNSUPPORTED_FILE", "message": "Only valid JPEG and PNG images are allowed."})
     return _ok(result)

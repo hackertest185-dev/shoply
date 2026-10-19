@@ -1,5 +1,6 @@
 """schemas/order_schema.py"""
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from app.core.input_security import clean_text
 
 
 class AddressCreate(BaseModel):
@@ -12,6 +13,11 @@ class AddressCreate(BaseModel):
     zip_code:   str
     country:    str
     is_default: bool = False
+
+    @field_validator("label", "line1", "line2", "city", "state", "zip_code", "country")
+    @classmethod
+    def normalize_text(cls, value: str | None) -> str | None:
+        return None if value is None else clean_text(value, max_length=200)
 
 
 class CheckoutIntentRequest(BaseModel):
@@ -48,3 +54,8 @@ class AddressUpdate(BaseModel):
     zip_code:   str | None = None
     country:    str | None = None
     is_default: bool | None = None
+
+    @field_validator("label", "line1", "line2", "city", "state", "zip_code", "country")
+    @classmethod
+    def normalize_text(cls, value: str | None) -> str | None:
+        return None if value is None else clean_text(value, max_length=200)

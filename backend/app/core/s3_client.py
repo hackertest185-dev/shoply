@@ -11,6 +11,7 @@ from io import BytesIO
 import boto3
 
 from .config import settings
+from .input_security import normalize_image, validate_pdf
 
 _s3_client = None
 
@@ -37,11 +38,11 @@ def _detect_mime(content: bytes, filename: str) -> str:
     # Magic bytes detection
     if content[:4] == b"%PDF":
         return "application/pdf"
-    if content[:2] in (b"\xff\xd8", b"\xff\xe0", b"\xff\xe1"):
+    if content[:2] == b"\xff\xd8":
         return "image/jpeg"
     if content[:8] == b"\x89PNG\r\n\x1a\n":
         return "image/png"
-    if content[:4] in (b"RIFF", b"WEBP"):
+    if content[:4] == b"RIFF" and content[8:12] == b"WEBP":
         return "image/webp"
     # Fallback to extension
     guessed, _ = mimetypes.guess_type(filename)
@@ -61,10 +62,14 @@ async def upload_delivery_document(
     Path: {user_id}/{submission_round}/{document_type}/{uuid}.{ext}
     """
     mime = _detect_mime(content, filename)
-    if mime not in ALLOWED_DOCUMENT_MIME_TYPES:
+    if mime == "application/pdf":
+        content = validate_pdf(content)
+    elif mime in {"image/jpeg", "image/png"}:
+        content, mime, _ = normalize_image(content)
+    else:
         raise ValueError(f"File type {mime} not allowed for documents")
 
-    ext = {"application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png"}[mime]
+    ext = "pdf" if mime == "application/pdf" else "webp"
     key = f"{user_id}/{submission_round}/{document_type}/{uuid.uuid4()}.{ext}"
 
     get_s3().put_object(
@@ -72,6 +77,7 @@ async def upload_delivery_document(
         Key=key,
         Body=BytesIO(content),
         ContentType=mime,
+        ContentDisposition="attachment",
         ServerSideEncryption="AES256",
         Tagging=f"user_id={user_id}&document_type={document_type}&round={submission_round}",
     )
@@ -91,8 +97,9 @@ async def upload_proof_of_delivery(
     mime = _detect_mime(content, filename)
     if mime not in ALLOWED_PROOF_MIME_TYPES:
         raise ValueError(f"File type {mime} not allowed for proof images")
+    content, mime, _ = normalize_image(content)
 
-    ext = "jpg" if mime == "image/jpeg" else "png"
+    ext = "webp"
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     key = f"{order_id}/{ts}_{uuid.uuid4()}.{ext}"
 
@@ -101,18 +108,30 @@ async def upload_proof_of_delivery(
         Key=key,
         Body=BytesIO(content),
         ContentType=mime,
+        ContentDisposition="attachment",
         ServerSideEncryption="AES256",
         Tagging=f"order_id={order_id}&agent_id={agent_id}",
     )
 
-    return f"https://{settings.S3_BUCKET_PROOF}.s3.{settings.AWS_REGION}.amazonaws.com/{key}"
+    # Keep the bucket private.  Callers should generate a short-lived signed
+    # URL only after checking the order owner or admin authorization.
+    return key
 
 
-def generate_signed_url(bucket: str, key: str, expiry_seconds: int = 900) -> str:
+def generate_signed_url(
+    bucket: str,
+    key: str,
+    expiry_seconds: int = 900,
+    *,
+    download: bool = False,
+) -> str:
     """Generate a pre-signed URL valid for expiry_seconds (default 15 min)."""
+    params = {"Bucket": bucket, "Key": key}
+    if download:
+        params["ResponseContentDisposition"] = "attachment"
     return get_s3().generate_presigned_url(
         "get_object",
-        Params={"Bucket": bucket, "Key": key},
+        Params=params,
         ExpiresIn=expiry_seconds,
     )
 
@@ -126,8 +145,8 @@ async def upload_product_image(
     mime = _detect_mime(content, filename)
     if mime not in ALLOWED_PRODUCT_MIME_TYPES:
         raise ValueError(f"File type {mime} not allowed for product images")
+    content, mime, ext = normalize_image(content)
 
-    ext = mime.split("/")[-1].replace("jpeg", "jpg")
     key = f"{vendor_id}/{uuid.uuid4()}.{ext}"
 
     get_s3().put_object(
@@ -135,7 +154,7 @@ async def upload_product_image(
         Key=key,
         Body=BytesIO(content),
         ContentType=mime,
-        ACL="public-read",
+        CacheControl="public, max-age=31536000, immutable",
     )
 
     return f"https://{settings.S3_BUCKET_PRODUCTS}.s3.{settings.AWS_REGION}.amazonaws.com/{key}"
