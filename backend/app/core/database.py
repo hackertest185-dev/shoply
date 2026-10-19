@@ -84,7 +84,10 @@ async def _create_indexes() -> None:
     )
     await db.orders.create_index("payment_intent_id", unique=True, sparse=True, background=True)
     await db.orders.create_index(
-        [("customer_id", 1), ("idempotency_key", 1)], unique=True, sparse=True, background=True
+        [("customer_id", 1), ("idempotency_key", 1)],
+        unique=True,
+        partialFilterExpression={"idempotency_key": {"$type": "string"}},
+        background=True,
     )
 
     # Carts
