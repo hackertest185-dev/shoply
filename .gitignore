@@ -1,0 +1,44 @@
+# Secrets — NEVER commit these
+.env
+.env.*
+!.env.example
+/backend/env
+/client/env
+backend/.env
+client/.env
+*.pem
+private.pem
+*.local
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+dist/
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# Node / Vite
+node_modules/
+client/dist/
+client/.env.local
+
+# Cloudflare Pages build output
+client/.wrangler/
+
+# Docker volumes
+mongo_data/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp

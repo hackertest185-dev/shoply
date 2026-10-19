@@ -1,0 +1,28 @@
+/* Design tokens matching the architecture document */
+:root {
+  --navy:        #0a0f1e;
+  --navy-mid:    #111827;
+  --navy-card:   #161d2e;
+  --navy-border: #1e2a3a;
+  --amber:       #f59e0b;
+  --amber-lt:    #fcd34d;
+  --amber-dk:    #d97706;
+  --white:       #f8f9fc;
+  --muted:       #8b98b1;
+  --muted2:      #4a5568;
+  --success:     #10b981;
+  --danger:      #ef4444;
+  --info:        #3b82f6;
+  --font-serif:  'DM Serif Display', Georgia, serif;
+  --font-sans:   'Plus Jakarta Sans', system-ui, sans-serif;
+  --font-mono:   'Geist Mono', 'Courier New', monospace;
+  --radius:      12px;
+  --radius-sm:   8px;
+  --shadow-sm:   0 2px 8px rgba(0,0,0,0.3);
+  --shadow-md:   0 8px 32px rgba(0,0,0,0.4);
+  --shadow-lg:   0 20px 60px rgba(0,0,0,0.5);
+  --transition:  0.2s cubic-bezier(0.4,0,0.2,1);
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes fadeInUp { from { opacity:0; transform:translateY(20px); } to { opacity:1; transform:translateY(0); } }

@@ -1,0 +1,75 @@
+
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: shoply_mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_DATABASE: shoply
+    volumes:
+      - mongo_data:/data/db
+    networks: [shoply]
+    # NOT exposed to host in production — API connects via internal network
+    #expose: ['27017']
+    ports:
+      - "27018:27017"
+    healthcheck:
+      test: ['CMD', 'mongosh', '--eval', 'db.adminCommand("ping")']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: shoply_redis
+    restart: unless-stopped
+    command: redis-server --save "" --appendonly no --maxmemory 256mb --maxmemory-policy allkeys-lru
+    networks: [shoply]
+    expose: ['6379']
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: shoply_api
+    restart: unless-stopped
+    env_file: ./backend/.env
+    environment:
+      MONGO_URI:    mongodb://mongodb:27017
+      REDIS_URL:    redis://redis:6379
+      ENVIRONMENT:  production
+      DEBUG:        "false"
+      ENABLE_LEGACY_DELIVERY: "false"
+      ENABLE_ONLINE_PAYMENTS: "false"
+    ports: ['8000:8000']
+    networks: [shoply]
+    depends_on:
+      mongodb: { condition: service_healthy }
+      redis:   { condition: service_healthy }
+    healthcheck:
+      test: ['CMD', 'python', '-c', 'import urllib.request; urllib.request.urlopen("http://localhost:8000/ready", timeout=5)']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: shoply_client
+    restart: unless-stopped
+    ports: ['80:80']
+    networks: [shoply]
+    depends_on: [backend]
+
+volumes:
+  mongo_data:
+
+networks:
+  shoply:
+    driver: bridge

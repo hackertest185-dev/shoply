@@ -1,0 +1,36 @@
+# ── Web framework ─────────────────────────────────────────
+fastapi==0.146.0
+starlette==1.9.0
+uvicorn[standard]==0.32.1
+python-multipart==0.0.32    # multipart/form-data uploads
+
+# ── Database ──────────────────────────────────────────────
+motor==3.7.1                # async MongoDB driver
+pymongo==4.19.0            # sync client (motor dependency)
+
+# ── Cache / rate limit ────────────────────────────────────
+redis==7.2.1
+slowapi==0.1.9              # Rate limiting for FastAPI (wraps limits)
+
+# ── Auth / security ───────────────────────────────────────
+PyJWT[crypto]==2.15.1       # JWT RS256
+bcrypt==4.2.1
+passlib[bcrypt]==1.7.4
+pydantic[email]==2.10.4
+pydantic-settings==2.7.0
+
+# ── Payments ──────────────────────────────────────────────
+stripe==11.4.0
+
+# ── File storage ──────────────────────────────────────────
+boto3==1.35.86
+botocore==1.35.86
+
+# ── Content sanitization ──────────────────────────────────
+bleach==6.4.0
+
+# ── Customer receipts ────────────────────────────────────
+reportlab==4.4.4
+
+# ── Email ─────────────────────────────────────────────────
+sendgrid==6.11.0

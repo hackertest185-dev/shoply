@@ -1,0 +1,29 @@
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500;1,600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+
+:root {
+  --navy: #091917;
+  --navy-mid: #102522;
+  --navy-card: #142a27;
+  --navy-border: #2a4540;
+  --amber: #dfbd89;
+  --white: #f7f1e7;
+  --muted: #b3c2b9;
+}
+
+body {
+  margin: 0;
+  background: #091917;
+  color: #f7f1e7;
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+}
+
+button, input, select, textarea { font: inherit; }
+:focus-visible { outline: 2px solid #dfbd89; outline-offset: 3px; }
+.delivery-order-card { box-shadow: 0 10px 32px rgba(0,0,0,.11); }
+@media (max-width: 700px) {
+  .delivery-heading, .delivery-order-card { flex-wrap: wrap; gap: 18px; }
+  .delivery-order-action { width: 100%; justify-content: space-between; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}

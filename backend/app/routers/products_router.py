@@ -1,0 +1,202 @@
+"""routers/products_router.py"""
+import uuid
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pymongo.errors import DuplicateKeyError
+
+from app.core.database import get_db
+from app.dependencies.auth_dependency import get_current_user
+from app.dependencies.rbac_dependency import require_admin, require_customer
+from app.schemas.product_schema import ProductCreate, ProductUpdate, ReviewCreate
+from app.services import products_service, review_service
+
+router = APIRouter(prefix="/products", tags=["Products"])
+
+
+def _ok(data, meta=None) -> dict:
+    r = {"success": True, "data": data, "request_id": str(uuid.uuid4())}
+    if meta:
+        r["meta"] = meta
+    return r
+
+
+@router.get("")
+async def list_products(
+    request: Request,
+    q:            str   | None = Query(None, max_length=100),
+    category:     str   | None = None,
+    vendor_id:    str   | None = None,
+    min_price:    float | None = Query(None, ge=0),
+    max_price:    float | None = Query(None, ge=0),
+    sort:         str          = Query("-created_at"),
+    page:         int          = Query(1, ge=1),
+    limit:        int          = Query(20, ge=1, le=100),
+    in_stock:     bool         = False,
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    params = {k: v for k, v in request.query_params.items()}
+    products, total = await products_service.list_products(db, params)
+    total_pages = max(1, -(-total // limit))
+    return _ok(
+        products,
+        {"page": page, "limit": limit, "total": total, "total_pages": total_pages},
+    )
+
+
+@router.get("/manage")
+async def list_managed_products(
+    current_user: dict = Depends(require_admin),
+    limit: int = Query(50, ge=1, le=200),
+    db=Depends(get_db),
+):
+    """Admin catalog, including inactive products."""
+    items = await products_service.list_products_for_admin(db, limit)
+    return _ok(items)
+
+
+@router.get("/{product_id}")
+async def get_product(product_id: str, current_user: dict = Depends(get_current_user), db=Depends(get_db)):
+    product = await products_service.get_product(db, product_id)
+    if not product:
+        raise HTTPException(
+            status_code=404,
+            detail={"success": False, "error": {"code": "NOT_FOUND", "message": "Product not found."}},
+        )
+    return _ok(product)
+
+
+@router.get("/{product_id}/reviews")
+async def list_product_reviews(
+    product_id: str,
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    db=Depends(get_db),
+):
+    docs, total = await review_service.list_reviews(db, product_id, page, limit)
+    total_pages = max(1, -(-total // limit))
+    return _ok(
+        docs,
+        {"page": page, "limit": limit, "total": total, "total_pages": total_pages},
+    )
+
+
+@router.post("/{product_id}/reviews", status_code=201)
+async def create_product_review(
+    product_id: str,
+    body: ReviewCreate,
+    current_user: dict = Depends(require_customer),
+    db=Depends(get_db),
+):
+    product = await products_service.get_product(db, product_id)
+    if not product:
+        raise HTTPException(
+            status_code=404,
+            detail={"success": False, "error": {"code": "NOT_FOUND", "message": "Product not found."}},
+        )
+    try:
+        review = await review_service.create_review(
+            db, product_id, current_user["user_id"], body.rating, body.body
+        )
+    except ValueError as exc:
+        if str(exc) == "REVIEW_EXISTS":
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "REVIEW_EXISTS", "message": "You already reviewed this product."},
+            )
+        raise HTTPException(status_code=400, detail={"code": str(exc)})
+    return _ok(review)
+
+
+@router.patch("/{product_id}/reviews/me")
+async def update_my_review(
+    product_id: str,
+    body: ReviewCreate,
+    current_user: dict = Depends(require_customer),
+    db=Depends(get_db),
+):
+    try:
+        await review_service.update_review(
+            db, product_id, current_user["user_id"], body.rating, body.body
+        )
+    except ValueError as exc:
+        if str(exc) == "REVIEW_NOT_FOUND":
+            raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
+        raise HTTPException(status_code=400, detail={"code": str(exc)})
+    return _ok({"message": "Review updated."})
+
+
+@router.delete("/{product_id}/reviews/me")
+async def delete_my_review(
+    product_id: str,
+    current_user: dict = Depends(require_customer),
+    db=Depends(get_db),
+):
+    try:
+        await review_service.delete_review(db, product_id, current_user["user_id"])
+    except ValueError as exc:
+        if str(exc) == "REVIEW_NOT_FOUND":
+            raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
+        raise HTTPException(status_code=400, detail={"code": str(exc)})
+    return _ok({"message": "Review deleted."})
+
+
+@router.post("", status_code=201)
+async def create_product(
+    body: ProductCreate,
+    current_user: dict = Depends(require_admin),
+    db=Depends(get_db),
+):
+    try:
+        product_id = await products_service.create_product(
+            db, current_user["user_id"], body.model_dump()
+        )
+    except DuplicateKeyError:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "PRODUCT_NAME_CONFLICT", "message": "A product with this name already exists. Choose a different name."},
+        )
+    return _ok({
+        "id":      product_id,
+        "status":  "active",
+        "message": "Product is available in the shop.",
+    })
+
+
+@router.patch("/{product_id}")
+async def update_product(
+    product_id: str,
+    body: ProductUpdate,
+    current_user: dict = Depends(require_admin),
+    db=Depends(get_db),
+):
+    try:
+        await products_service.update_product(
+            db, product_id, current_user["user_id"],
+            current_user["role"], body.model_dump(exclude_none=True),
+        )
+    except ValueError as exc:
+        code = str(exc)
+        if code == "NOT_FOUND":
+            raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
+        raise HTTPException(status_code=403, detail={"code": "FORBIDDEN"})
+    return _ok({"message": "Product updated."})
+
+
+@router.delete("/{product_id}")
+async def delete_product(
+    product_id: str,
+    current_user: dict = Depends(require_admin),
+    db=Depends(get_db),
+):
+    # Soft delete
+    try:
+        await products_service.update_product(
+            db, product_id, current_user["user_id"],
+            current_user["role"], {"status": "inactive"},
+        )
+    except ValueError as exc:
+        code = str(exc)
+        if code == "NOT_FOUND":
+            raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
+        raise HTTPException(status_code=403, detail={"code": "FORBIDDEN"})
+    return _ok({"message": "Product removed."})

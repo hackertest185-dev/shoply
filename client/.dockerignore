@@ -1,0 +1,8 @@
+.env
+env
+node_modules/
+dist/
+.wrangler/
+.git/
+Dockerfile
+.dockerignore
