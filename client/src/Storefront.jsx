@@ -172,6 +172,9 @@ const GlobalStyles = () => (
     }
     @media (max-width: 700px) {
       .shop-home { padding: 0 14px 80px !important; }
+      .shop-home [data-reveal] { opacity: 1 !important; transform: none !important; }
+      .shop-section-heading { align-items: flex-start !important; flex-wrap: wrap; gap: 12px; }
+      .shop-section-heading .shop-section-title { font-size: clamp(32px, 9vw, 42px) !important; }
       .shop-header-inner { height: auto !important; min-height: 66px; flex-wrap: wrap; padding: 12px 16px !important; gap: 10px !important; }
       .shop-search { order: 3; flex-basis: 100%; max-width: none !important; }
       .shop-search input { height: 40px; }
@@ -208,6 +211,7 @@ const GlobalStyles = () => (
       @keyframes heroChipFloat { from { transform: translateY(0); } to { transform: translateY(-8px); } }
       .shop-category-grid { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
       .shop-category-tile { min-height: 150px; padding: 18px !important; }
+      .shop-category-tile [data-category-name] { font-size: clamp(20px, 5.6vw, 26px) !important; overflow-wrap: anywhere; }
       .shop-trust-grid { grid-template-columns: repeat(2,minmax(0,1fr)) !important; }
       .shop-step-grid { grid-template-columns: 1fr; }
       .shop-filter-aside > div { grid-template-columns: 1fr; gap: 16px !important; }
@@ -220,6 +224,7 @@ const GlobalStyles = () => (
       .shop-admin-product-row > div:nth-child(2) { min-width: 150px; }
     }
     @media (max-width: 420px) { .shop-product-grid { grid-template-columns: 1fr; } .shop-trust-grid { grid-template-columns: 1fr !important; } }
+    @media (max-width: 360px) { .shop-category-grid { grid-template-columns: 1fr; } .shop-category-tile { min-height: 128px; } }
     @media (prefers-reduced-motion: reduce) {
       *,*::before,*::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
       .shop-hero-photo { transform: none !important; will-change: auto; }
@@ -1464,7 +1469,7 @@ function HomePage({ state, dispatch, onAddToCart }) {
 
       {/* Categories */}
       <section style={{ marginBottom: "72px" }} data-reveal>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "24px" }}>
+        <div className="shop-section-heading" style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "24px" }}>
           <div><div className="shop-kicker">EXPLORE BY INTEREST</div><h2 className="shop-section-title" style={{ fontFamily: "var(--font-serif)", fontSize: "42px" }}>Find your kind of good.</h2></div>
           <button onClick={() => dispatch({ type: "NAVIGATE", page: "products" })} style={{ background: "none", border: "none", color: "var(--amber)", cursor: "pointer", fontSize: "14px", fontWeight: 600, fontFamily: "var(--font-sans)" }}>
             View all →
@@ -1484,7 +1489,7 @@ function HomePage({ state, dispatch, onAddToCart }) {
               onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--navy-border)"; e.currentTarget.style.background = "var(--navy-card)"; }}>
               <span className="shop-category-number">0{i + 1} / COLLECTION</span>
               <div>
-                <div style={{ fontFamily: "var(--font-serif)", fontWeight: 600, fontSize: "30px", color: "var(--white)", marginBottom: "2px", lineHeight: 1 }}>{cat.name} <span style={{ fontFamily: "var(--font-sans)", fontSize: 17, color: "var(--amber)" }}>↗</span></div>
+                <div data-category-name style={{ fontFamily: "var(--font-serif)", fontWeight: 600, fontSize: "30px", color: "var(--white)", marginBottom: "2px", lineHeight: 1 }}>{cat.name} <span style={{ fontFamily: "var(--font-sans)", fontSize: 17, color: "var(--amber)" }}>↗</span></div>
                 {typeof cat.count === "number" && <div style={{ fontSize: "12px", color: "var(--muted)" }}>{cat.count} items</div>}
               </div>
             </button>
@@ -1493,22 +1498,25 @@ function HomePage({ state, dispatch, onAddToCart }) {
       </section>
 
       {/* Featured Products */}
-      {state.auth.isAuthenticated && <section data-reveal>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "24px" }}>
+      <section data-reveal>
+        <div className="shop-section-heading" style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "24px" }}>
           <div><div className="shop-kicker">FRESHLY SELECTED</div><h2 className="shop-section-title" style={{ fontFamily: "var(--font-serif)", fontSize: "42px" }}>The latest finds.</h2></div>
-          <button onClick={() => dispatch({ type: "NAVIGATE", page: "products" })} style={{ background: "none", border: "none", color: "var(--amber)", cursor: "pointer", fontSize: "14px", fontWeight: 600, fontFamily: "var(--font-sans)" }}>
+          <button onClick={() => state.auth.isAuthenticated ? dispatch({ type: "NAVIGATE", page: "products" }) : dispatch({ type: "AUTH_MODAL", mode: "login" })} style={{ background: "none", border: "none", color: "var(--amber)", cursor: "pointer", fontSize: "14px", fontWeight: 600, fontFamily: "var(--font-sans)" }}>
             See all →
           </button>
         </div>
-        <div className="shop-product-grid">
+        {state.auth.isAuthenticated ? <div className="shop-product-grid">
           {loadingHome && [...Array(4)].map((_, i) => <div key={i} className="skeleton" style={{ minHeight: 290, borderRadius: 18 }} />)}
           {products.map((p, i) => (
             <div key={p.id} style={{ animation: `fadeInUp 0.5s ${i * 0.08}s ease both` }}>
               <ProductCard product={p} dispatch={dispatch} onAddToCart={onAddToCart} />
             </div>
           ))}
-        </div>
-      </section>}
+        </div> : <div className="shop-card-panel" style={{ borderRadius: 18, padding: "28px 24px", color: "var(--muted)", lineHeight: 1.7 }}>
+          Sign in to discover the latest products selected by Shoply.
+          <div style={{ marginTop: 18 }}><Btn onClick={() => dispatch({ type: "AUTH_MODAL", mode: "login" })}>Sign in to explore ↗</Btn></div>
+        </div>}
+      </section>
 
       {/* Trust strip */}
       <section className="shop-trust-grid" data-reveal style={{ marginTop: "78px", display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "28px" }}>
