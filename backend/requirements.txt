@@ -16,8 +16,8 @@ slowapi==0.1.9              # Rate limiting for FastAPI (wraps limits)
 PyJWT[crypto]==2.15.1       # JWT RS256
 bcrypt==4.2.1
 passlib[bcrypt]==1.7.4
-pydantic[email]==2.10.4
-pydantic-settings==2.7.0
+pydantic[email]>=2.12.0
+pydantic-settings>=2.12.0
 
 # ── Payments ──────────────────────────────────────────────
 stripe==11.4.0
