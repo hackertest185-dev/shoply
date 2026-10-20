@@ -114,7 +114,7 @@ export const api = {
   auth: {
     register:       (data)         => apiClient.post('/auth/register', data),
     login:          (data)         => apiClient.post('/auth/login', data),
-    verifyAdminMfa:  (data)         => apiClient.post('/auth/admin/verify-mfa', data),
+    verifyLoginOtp:  (data)         => apiClient.post('/auth/verify-login-otp', data),
     logout:         ()             => apiClient.post('/auth/logout'),
     refresh:        ()             => silentRefresh(), // 👈 ربط الدالة بمسار الـ Refresh
     me:             ()             => apiClient.get('/auth/me'),

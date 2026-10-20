@@ -13,7 +13,7 @@ from slowapi.util import get_remote_address
 from app.core.database import get_db
 from app.core.config import settings
 from app.core.security import hash_password, verify_password
-from app.core.redis_client import store_email_otp, verify_email_otp, delete_email_otp, store_password_reset_token, consume_password_reset_token, consume_rate_limit
+from app.core.redis_client import store_password_reset_token, consume_password_reset_token, consume_rate_limit
 from app.dependencies.auth_dependency import get_current_user
 from app.dependencies.rbac_dependency import require_customer
 from app.schemas.auth_schema import (
@@ -21,16 +21,14 @@ from app.schemas.auth_schema import (
     ForgotPasswordRequest,
     LoginRequest,
     RegisterRequest,
-    EmailOtpRequest,
-    EmailOtpVerifyRequest,
     VerifyAccountRequest,
     ResetPasswordRequest,
-    AdminMFAVerifyRequest,
+    LoginOtpVerifyRequest,
 )
 from app.models import user_model
 from app.services import auth_service
 from app.services.audit_log_service import write_audit_log
-from app.services.email_service import email_is_configured, send_email_otp, send_order_email
+from app.services.email_service import email_is_configured, send_order_email
 
 router  = APIRouter(prefix="/auth", tags=["Authentication"])
 limiter = Limiter(key_func=get_remote_address)
@@ -119,80 +117,11 @@ async def resend_verification(request: Request, body: ForgotPasswordRequest, db=
     return _success({"message": "If this account needs verification, a new link has been sent."})
 
 
-@router.post("/email/request-otp")
-@limiter.limit("5/hour")
-async def request_email_otp(
-    request: Request,
-    body: EmailOtpRequest,
-    db=Depends(get_db),
-):
-    """Send a six-digit sign-in OTP only to a verified non-admin account."""
-    if not email_is_configured():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=_error("EMAIL_NOT_CONFIGURED", "Email OTP is not configured yet. Add the Gmail App Password to the backend environment."),
-        )
-    email = str(body.email).lower().strip()
-    if not await consume_rate_limit("email-otp-request", email, 5, 60 * 60):
-        raise HTTPException(status_code=429, detail=_error("RATE_LIMITED", "Too many code requests. Try again later."))
-    existing = await user_model.find_by_email(db, email)
-    if not existing or existing.get("is_verified") is not True or existing.get("status", "active") != "active" or existing.get("role") == "admin":
-        return _success({"message": "If this email has a verified account, a sign-in code has been sent.", "expires_in": settings.EMAIL_OTP_TTL_SECONDS})
-
-    otp = str(secrets.randbelow(1_000_000)).zfill(6)
-    await store_email_otp(email, otp)
-    try:
-        await send_email_otp(email, otp)
-    except Exception as exc:
-        # Do not leave a usable code behind when delivery failed.
-        await delete_email_otp(email)
-        if isinstance(exc, RuntimeError):
-            raise HTTPException(status_code=503, detail=_error("EMAIL_NOT_CONFIGURED", str(exc)))
-        raise HTTPException(status_code=502, detail=_error("EMAIL_DELIVERY_FAILED", "We could not send the code. Please try again."))
-    return _success({"message": "If this email has a verified account, a sign-in code has been sent.", "expires_in": settings.EMAIL_OTP_TTL_SECONDS})
-
-
-@router.post("/email/verify-otp")
-@limiter.limit("15/15minute")
-async def verify_email_otp_endpoint(
-    request: Request,
-    body: EmailOtpVerifyRequest,
-    response: Response,
-    db=Depends(get_db),
-):
-    """Verify the code and issue the regular Shoply session tokens."""
-    email = str(body.email).lower().strip()
-    if not await consume_rate_limit("email-otp-verify", email, settings.EMAIL_OTP_MAX_ATTEMPTS + 2, settings.EMAIL_OTP_TTL_SECONDS):
-        raise HTTPException(status_code=429, detail=_error("RATE_LIMITED", "Too many verification attempts. Request a new code later."))
-    result = await verify_email_otp(email, body.otp)
-    if result.get("locked"):
-        raise HTTPException(status_code=429, detail=_error("OTP_LOCKED", "Too many incorrect attempts. Request a new code."))
-    if result.get("expired"):
-        raise HTTPException(status_code=400, detail=_error("OTP_EXPIRED", "This code has expired. Request a new one."))
-    if not result.get("valid"):
-        raise HTTPException(status_code=400, detail=_error("OTP_INVALID", "The code is incorrect."))
-
-    ip = request.client.host if request.client else "unknown"
-    try:
-        auth_result = await auth_service.authenticate_email_otp(db, email, body.mode, None, ip)
-    except ValueError:
-        raise HTTPException(status_code=401, detail=_error("INVALID_CREDENTIALS", "This email cannot be signed in."))
-
-    _set_refresh_cookie(response, auth_result["refresh_token_plain"])
-    return _success({
-        "access_token": auth_result["access_token"],
-        "token_type": "bearer",
-        "expires_in": 900,
-        "user": auth_result["user"],
-    })
-
-
 @router.post("/login")
 @limiter.limit(settings.RATE_LIMIT_LOGIN)
 async def login(
     request: Request,
     body: LoginRequest,
-    response: Response,
     db=Depends(get_db),
 ):
     ip = request.client.host if request.client else "unknown"
@@ -210,45 +139,39 @@ async def login(
                 status_code=423,
                 detail=_error("ACCOUNT_LOCKED", "Account temporarily locked. Please try again later."),
             )
+        if code == "EMAIL_NOT_VERIFIED":
+            raise HTTPException(status_code=403, detail=_error("EMAIL_NOT_VERIFIED", "Verify your email before signing in. You can request a new verification link."))
         if code in {"MFA_UNAVAILABLE", "MFA_DELIVERY_FAILED"}:
-            raise HTTPException(status_code=503, detail=_error("MFA_UNAVAILABLE", "Admin verification is temporarily unavailable."))
-        if code == "OTP_REQUIRED":
-            raise HTTPException(status_code=401, detail=_error("OTP_REQUIRED", "Use an email code to sign in."))
+            raise HTTPException(status_code=503, detail=_error("MFA_UNAVAILABLE", "Email verification is temporarily unavailable."))
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=_error("INVALID_CREDENTIALS", "Invalid email or password."),
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    if result.get("mfa_required"):
-        return _success({
-            "mfa_required": True,
-            "challenge_id": result["challenge_id"],
-            "expires_in": result["expires_in"],
-            "user": result["user"],
-        })
-    _set_refresh_cookie(response, result["refresh_token_plain"])
+    if not result.get("mfa_required"):
+        raise HTTPException(status_code=503, detail=_error("AUTH_UNAVAILABLE", "Sign-in is temporarily unavailable."))
     return _success({
-        "access_token": result["access_token"],
-        "token_type":   "bearer",
-        "expires_in":   result["expires_in"],
-        "user":         result["user"],
+        "mfa_required": True,
+        "challenge_id": result["challenge_id"],
+        "expires_in": result["expires_in"],
+        "user": result["user"],
     })
 
 
-@router.post("/admin/verify-mfa")
+@router.post("/verify-login-otp")
 @limiter.limit("10/15minute")
-async def verify_admin_mfa(
+async def verify_login_otp(
     request: Request,
-    body: AdminMFAVerifyRequest,
+    body: LoginOtpVerifyRequest,
     response: Response,
     db=Depends(get_db),
 ):
     ip = request.client.host if request.client else "unknown"
-    if not await consume_rate_limit("admin-mfa", body.challenge_id, settings.ADMIN_MFA_MAX_ATTEMPTS + 2, settings.ADMIN_MFA_TTL_SECONDS):
+    if not await consume_rate_limit("login-otp", body.challenge_id, settings.LOGIN_OTP_MAX_ATTEMPTS + 2, settings.LOGIN_OTP_TTL_SECONDS):
         raise HTTPException(status_code=429, detail=_error("RATE_LIMITED", "Too many verification attempts. Try again later."))
     try:
-        result = await auth_service.verify_admin_mfa(db, body.challenge_id, body.otp, ip)
+        result = await auth_service.verify_login_otp(db, body.challenge_id, body.otp, ip)
     except ValueError as exc:
         code = str(exc)
         if code == "MFA_LOCKED":

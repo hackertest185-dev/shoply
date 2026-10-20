@@ -49,6 +49,8 @@ EMAIL_OTP_LOCK_KEY_PREFIX = "email_otp_lock:"
 PASSWORD_RESET_KEY_PREFIX = "password_reset:"
 ADMIN_MFA_KEY_PREFIX = "admin_mfa:"
 ADMIN_MFA_ATTEMPTS_KEY_PREFIX = "admin_mfa_attempts:"
+LOGIN_CHALLENGE_KEY_PREFIX = "login_challenge:"
+LOGIN_CHALLENGE_ATTEMPTS_KEY_PREFIX = "login_challenge_attempts:"
 
 
 def _email_key(email: str) -> str:
@@ -243,6 +245,69 @@ async def verify_admin_mfa_challenge(
         await redis.delete(key)
         return {"valid": False, "locked": True, "attempts_remaining": 0, "user_id": challenge.get("user_id")}
     return {"valid": False, "locked": False, "attempts_remaining": remaining, "user_id": challenge.get("user_id")}
+
+
+def _login_challenge_keys(challenge_id: str) -> tuple[str, str]:
+    digest = hashlib.sha256(challenge_id.encode()).hexdigest()
+    return f"{LOGIN_CHALLENGE_KEY_PREFIX}{digest}", f"{LOGIN_CHALLENGE_ATTEMPTS_KEY_PREFIX}{digest}"
+
+
+async def store_login_challenge(
+    challenge_id: str, user_id: str, auth_version: int, otp: str, ttl: int
+) -> None:
+    """Store a one-time password-verified login challenge without plaintext OTP."""
+    redis = get_redis()
+    key, attempts_key = _login_challenge_keys(challenge_id)
+    payload = {
+        "purpose": "password_login",
+        "user_id": user_id,
+        "auth_version": auth_version,
+        "otp_hash": bcrypt.hashpw(otp.encode(), bcrypt.gensalt(rounds=10)).decode(),
+    }
+    await redis.set(key, json.dumps(payload), ex=ttl)
+    await redis.delete(attempts_key)
+
+
+async def delete_login_challenge(challenge_id: str) -> None:
+    redis = get_redis()
+    key, attempts_key = _login_challenge_keys(challenge_id)
+    await redis.delete(key, attempts_key)
+
+
+async def verify_login_challenge(
+    challenge_id: str, otp: str, max_attempts: int, ttl: int
+) -> dict[str, Any]:
+    redis = get_redis()
+    key, attempts_key = _login_challenge_keys(challenge_id)
+    raw = await redis.get(key)
+    if not raw:
+        return {"valid": False, "expired": True}
+    try:
+        payload = json.loads(raw)
+        if payload.get("purpose") != "password_login":
+            return {"valid": False, "expired": True}
+        otp_hash = payload["otp_hash"]
+        user_id = payload["user_id"]
+        auth_version = payload["auth_version"]
+        if not isinstance(user_id, str) or not isinstance(auth_version, int):
+            return {"valid": False, "expired": True}
+    except (TypeError, ValueError, KeyError):
+        return {"valid": False, "expired": True}
+
+    if bcrypt.checkpw(otp.encode(), otp_hash.encode()):
+        # GETDEL ensures two parallel submissions cannot both issue a session.
+        claimed = await redis.getdel(key)
+        if claimed != raw:
+            return {"valid": False, "expired": True}
+        await redis.delete(attempts_key)
+        return {"valid": True, "user_id": user_id, "auth_version": auth_version}
+
+    attempts = await redis.incr(attempts_key)
+    await redis.expire(attempts_key, ttl)
+    if attempts >= max_attempts:
+        await redis.delete(key)
+        return {"valid": False, "locked": True, "user_id": user_id}
+    return {"valid": False, "locked": False, "user_id": user_id}
 
 
 # ── Generic cache helpers ─────────────────────────────────────────────────────

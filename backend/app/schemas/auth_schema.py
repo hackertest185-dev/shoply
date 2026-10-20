@@ -4,7 +4,6 @@ Pydantic v2 request/response models for all auth endpoints.
 ConfigDict(extra="forbid") on all request schemas — extra fields rejected.
 """
 from enum import Enum
-from typing import Literal
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from app.core.config import settings
 
@@ -57,23 +56,6 @@ class ForgotPasswordRequest(BaseModel):
     email: EmailStr
 
 
-class EmailOtpRequest(BaseModel):
-    """Request a customer sign-in code for an already verified account."""
-    model_config = ConfigDict(extra="forbid")
-
-    email: EmailStr
-    mode: Literal["login"] = "login"
-
-
-class EmailOtpVerifyRequest(BaseModel):
-    """Verify a sign-in OTP and create a session."""
-    model_config = ConfigDict(extra="forbid")
-
-    email: EmailStr
-    otp: str = Field(..., pattern=r"^[0-9]{6}$")
-    mode: Literal["login"] = "login"
-
-
 class ResetPasswordRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     token: str = Field(..., min_length=20, max_length=256)
@@ -96,7 +78,7 @@ class ChangePasswordRequest(BaseModel):
         return _validate_password(v)
 
 
-class AdminMFAVerifyRequest(BaseModel):
+class LoginOtpVerifyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     challenge_id: str = Field(..., min_length=32, max_length=256)
     otp: str = Field(..., pattern=r"^[0-9]{6}$")

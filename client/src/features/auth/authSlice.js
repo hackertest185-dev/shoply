@@ -18,15 +18,6 @@ export const initializeAuth = createAsyncThunk('auth/initialize', async (_, { re
   }
 });
 
-export const loginUser = createAsyncThunk('auth/login', async (credentials, { rejectWithValue }) => {
-  try {
-    const res = await api.auth.login(credentials);
-    return res.data.data;  // { access_token, user }
-  } catch (err) {
-    return rejectWithValue(err.response?.data?.error || { code: 'UNKNOWN', message: 'Login failed.' });
-  }
-});
-
 export const logoutUser = createAsyncThunk('auth/logout', async (_, { dispatch }) => {
   try {
     await api.auth.logout();
@@ -73,16 +64,6 @@ const authSlice = createSlice({
       .addCase(initializeAuth.rejected, (state) => {
         state.isAuthenticated = false;
         state.isLoading       = false;
-      })
-      // loginUser
-      .addCase(loginUser.fulfilled, (state, action) => {
-        state.accessToken     = action.payload.access_token;
-        state.user            = action.payload.user;
-        state.isAuthenticated = true;
-        state.error           = null;
-      })
-      .addCase(loginUser.rejected, (state, action) => {
-        state.error = action.payload;
       });
   },
 });

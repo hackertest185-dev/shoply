@@ -18,7 +18,7 @@ async def test_current_role_comes_from_database_and_suspension_revokes_access(mo
     })
     monkeypatch.setattr(auth_dependency, "decode_access_token", lambda _: {
         "user_id": str(user_id), "email": "buyer@example.com", "role": "admin", "jti": "old-role",
-        "amr": ["email_otp"],
+        "amr": ["password", "email_otp"],
     })
     credential = HTTPAuthorizationCredentials(scheme="Bearer", credentials="signed-token")
 
@@ -56,4 +56,9 @@ async def test_unverified_and_password_only_customer_tokens_are_rejected(monkeyp
     assert password_only.value.status_code == 401
 
     payload["amr"] = ["email_otp"]
+    with pytest.raises(HTTPException) as otp_only:
+        await auth_dependency.get_current_user(credential, db)
+    assert otp_only.value.status_code == 401
+
+    payload["amr"] = ["password", "email_otp"]
     assert (await auth_dependency.get_current_user(credential, db))["user_id"] == str(user_id)

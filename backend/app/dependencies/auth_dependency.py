@@ -73,10 +73,10 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     amr = payload.get("amr") or []
-    if "email_otp" not in amr or (user.get("role") == "admin" and "password" not in amr):
+    if "email_otp" not in amr or "password" not in amr:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"code": "MFA_REQUIRED", "message": "An email-code session is required."},
+            detail={"code": "MFA_REQUIRED", "message": "A password and email-code session is required."},
             headers={"WWW-Authenticate": "Bearer"},
         )
 

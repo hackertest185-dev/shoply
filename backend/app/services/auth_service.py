@@ -2,7 +2,6 @@
 services/auth_service.py
 All authentication business logic. No HTTP concepts - pure Python.
 """
-import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -12,8 +11,9 @@ from pymongo.errors import DuplicateKeyError
 
 from app.core.config import settings
 from app.core.redis_client import (
-    store_admin_mfa_challenge,
-    verify_admin_mfa_challenge,
+    delete_login_challenge,
+    store_login_challenge,
+    verify_login_challenge,
 )
 from app.core.security import (
     DUMMY_HASH,
@@ -183,7 +183,7 @@ async def resend_verification(db, email: str) -> None:
 
 
 async def authenticate_user(db, email: str, password: str, ip: str) -> dict:
-    """Authenticate with a password; admin accounts require a second factor."""
+    """Authenticate with a password; every account then requires an email code."""
     email_lower = email.lower().strip()
     user = await user_model.find_by_email(db, email_lower)
     if not user:
@@ -228,85 +228,60 @@ async def authenticate_user(db, email: str, password: str, ip: str) -> dict:
         )
         raise ValueError("INVALID_CREDENTIALS")
 
-    if not user.get("is_verified") or user.get("status", "active") != "active":
+    if user.get("is_verified") is not True:
+        raise ValueError("EMAIL_NOT_VERIFIED")
+    if user.get("status", "active") != "active":
         raise ValueError("INVALID_CREDENTIALS")
 
     await user_model.reset_failed_logins(db, str(user["_id"]))
 
-    if user.get("role") == "admin":
-        if not email_is_configured():
-            await write_audit_log(
-                db,
-                str(user["_id"]),
-                "admin",
-                "admin_mfa_unavailable",
-                "users",
-                str(user["_id"]),
-                {"ip": ip},
-                ip,
-            )
-            raise ValueError("MFA_UNAVAILABLE")
+    if not email_is_configured():
+        raise ValueError("MFA_UNAVAILABLE")
 
-        challenge_id = secrets.token_urlsafe(32)
-        otp = str(secrets.randbelow(1_000_000)).zfill(6)
-        await store_admin_mfa_challenge(
-            challenge_id,
-            str(user["_id"]),
-            otp,
-            hashlib.sha256(ip.encode()).hexdigest(),
-            settings.ADMIN_MFA_TTL_SECONDS,
-        )
-        try:
-            await send_email_otp(user["email"], otp)
-        except Exception:
-            await write_audit_log(
-                db,
-                str(user["_id"]),
-                "admin",
-                "admin_mfa_delivery_failed",
-                "users",
-                str(user["_id"]),
-                {"ip": ip},
-                ip,
-            )
-            raise ValueError("MFA_DELIVERY_FAILED")
-
-        await write_audit_log(
-            db,
-            str(user["_id"]),
-            "admin",
-            "admin_mfa_requested",
-            "users",
-            str(user["_id"]),
-            {"ip": ip},
-            ip,
-        )
-        return {
-            "mfa_required": True,
-            "challenge_id": challenge_id,
-            "expires_in": settings.ADMIN_MFA_TTL_SECONDS,
-            "user": {"email": user["email"], "role": "admin"},
-        }
-
-    # Customer and delivery sessions are issued only after an email OTP.
-    raise ValueError("OTP_REQUIRED")
-
-
-async def verify_admin_mfa(db, challenge_id: str, otp: str, ip: str) -> dict:
-    """Consume an admin MFA challenge and issue a fully authenticated session."""
-    result = await verify_admin_mfa_challenge(
+    challenge_id = secrets.token_urlsafe(32)
+    otp = str(secrets.randbelow(1_000_000)).zfill(6)
+    await store_login_challenge(
         challenge_id,
+        str(user["_id"]),
+        int(user.get("auth_version", 1)),
         otp,
-        settings.ADMIN_MFA_MAX_ATTEMPTS,
-        settings.ADMIN_MFA_TTL_SECONDS,
+        settings.LOGIN_OTP_TTL_SECONDS,
+    )
+    try:
+        await send_email_otp(user["email"], otp)
+    except Exception as exc:
+        await delete_login_challenge(challenge_id)
+        await write_audit_log(
+            db, str(user["_id"]), user["role"], "login_otp_delivery_failed",
+            "users", str(user["_id"]), {"ip": ip}, ip,
+        )
+        raise ValueError("MFA_DELIVERY_FAILED") from exc
+
+    await write_audit_log(
+        db, str(user["_id"]), user["role"], "login_otp_requested",
+        "users", str(user["_id"]), {"ip": ip}, ip,
+    )
+    return {
+        "mfa_required": True,
+        "challenge_id": challenge_id,
+        "expires_in": settings.LOGIN_OTP_TTL_SECONDS,
+        "user": {"email": user["email"]},
+    }
+
+
+async def verify_login_otp(db, challenge_id: str, otp: str, ip: str) -> dict:
+    """Issue a session only for the account whose password created this challenge."""
+    result = await verify_login_challenge(
+        challenge_id, otp, settings.LOGIN_OTP_MAX_ATTEMPTS,
+        settings.LOGIN_OTP_TTL_SECONDS,
     )
     if not result.get("valid"):
-        event = "admin_mfa_locked" if result.get("locked") else "admin_mfa_failure"
+        event = "login_otp_locked" if result.get("locked") else "login_otp_failure"
         if result.get("user_id"):
             await write_audit_log(
                 db,
                 result["user_id"],
-                "admin",
+                "unknown",
                 event,
                 "users",
                 result["user_id"],
@@ -320,9 +295,9 @@ async def verify_admin_mfa(db, challenge_id: str, otp: str, ip: str) -> dict:
     raw_user = await db.users.find_one({"_id": ObjectId(result["user_id"])})
     if (
         not raw_user
-        or raw_user.get("role") != "admin"
         or raw_user.get("status", "active") != "active"
         or raw_user.get("is_verified") is not True
+        or int(raw_user.get("auth_version", 1)) != result["auth_version"]
     ):
         raise ValueError("MFA_INVALID")
 
@@ -330,19 +305,6 @@ async def verify_admin_mfa(db, challenge_id: str, otp: str, ip: str) -> dict:
     return await _issue_session(
         db, raw_user, ip, "login_success", ("password", "email_otp")
     )
-
-
-async def authenticate_email_otp(
-    db, email: str, mode: str, name: str | None, ip: str
-) -> dict:
-    """Authenticate an existing, verified non-admin account using email OTP."""
-    email_lower = email.lower().strip()
-    user = await user_model.find_by_email(db, email_lower)
-    if mode != "login" or not user or user.get("is_verified") is not True or user.get("status", "active") != "active":
-        raise ValueError("INVALID_CREDENTIALS")
-    if user.get("role") == "admin":
-        raise ValueError("ADMIN_MFA_REQUIRED")
-    return await _issue_session(db, user, ip, "login_email_otp")
 
 
 async def refresh_tokens(db, refresh_token_plain: str, ip: str = "unknown") -> dict:
@@ -384,7 +346,7 @@ async def refresh_tokens(db, refresh_token_plain: str, ip: str = "unknown") -> d
         raise ValueError("TOKEN_INVALID")
 
     amr = tuple(stored.get("amr") or ("password",))
-    if "email_otp" not in amr or (user.get("role") == "admin" and "password" not in amr):
+    if "email_otp" not in amr or "password" not in amr:
         raise ValueError("TOKEN_INVALID")
 
     session = await _issue_session(db, user, ip, "token_refresh", amr)

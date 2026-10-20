@@ -12,7 +12,7 @@ from mongomock_motor import AsyncMongoMockClient
 from app.core import redis_client
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.security import create_access_token, verify_password
+from app.core.security import create_access_token, hash_password, verify_password
 from app.main import app
 from app.routers import auth_router
 from app.services import auth_service
@@ -78,7 +78,7 @@ async def auth_setup(monkeypatch):
         sent["reset"].append((email, body))
 
     monkeypatch.setattr(auth_service, "send_verification_email", capture_verification)
-    monkeypatch.setattr(auth_router, "send_email_otp", capture_otp)
+    monkeypatch.setattr(auth_service, "send_email_otp", capture_otp)
     monkeypatch.setattr(auth_router, "send_order_email", capture_reset)
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -111,16 +111,15 @@ async def test_verification_link_is_required_one_time_and_account_bound(auth_set
     # Browser response tampering cannot change the persisted account state.
     forged_claim = create_access_token({
         "user_id": str(user_a["_id"]), "email": a, "role": "customer",
-        "is_verified": True, "auth_version": 1, "amr": ["email_otp"],
+        "is_verified": True, "auth_version": 1, "amr": ["password", "email_otp"],
     })
     denied = await client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {forged_claim}"})
     assert denied.status_code == 401
     password_login = await client.post("/api/v1/auth/login", json={
         "email": a, "password": "SecurePassword123",
     })
-    assert password_login.status_code == 401
+    assert password_login.status_code == 403
     assert "access_token" not in password_login.text
-    assert (await client.post("/api/v1/auth/email/request-otp", json={"email": a})).status_code == 200
     assert sent["otp"] == []
 
     token_a = token_from_link(sent["verify"][0][1], "verify_token")
@@ -129,27 +128,50 @@ async def test_verification_link_is_required_one_time_and_account_bound(auth_set
     assert (await db.users.find_one({"_id": user_a["_id"]}))["is_verified"] is True
     assert (await db.users.find_one({"_id": user_b["_id"]}))["is_verified"] is False
     assert (await client.post("/api/v1/auth/verify", json={"token": token_a})).status_code == 400
-    assert (await client.post("/api/v1/auth/email/request-otp", json={"email": b})).status_code == 200
-    assert sent["otp"] == []
 
     injected = await client.post("/api/v1/auth/register", json={
         "name": "Injected", "email": "evil@example.com",
         "password": "SecurePassword123", "is_verified": True,
     })
     assert injected.status_code == 422
-    register_mode = await client.post("/api/v1/auth/email/request-otp", json={
-        "email": "new@example.com", "mode": "register",
-    })
-    assert register_mode.status_code == 422
+    for old_path in ("/email/request-otp", "/email/verify-otp", "/admin/verify-mfa"):
+        old_endpoint = await client.post("/api/v1/auth" + old_path, json={"email": a})
+        assert old_endpoint.status_code == 404
 
-    assert (await client.post("/api/v1/auth/email/request-otp", json={"email": a})).status_code == 200
-    code_a = sent["otp"][-1][1]
-    wrong_account = await client.post("/api/v1/auth/email/verify-otp", json={
-        "email": b, "otp": code_a,
+    wrong_password = await client.post("/api/v1/auth/login", json={
+        "email": a, "password": "WrongPassword123",
     })
-    assert wrong_account.status_code == 400
-    signed_in = await client.post("/api/v1/auth/email/verify-otp", json={
-        "email": a, "otp": code_a,
+    assert wrong_password.status_code == 401
+    assert sent["otp"] == []
+
+    challenge = await client.post("/api/v1/auth/login", json={
+        "email": a, "password": "SecurePassword123",
+    })
+    assert challenge.status_code == 200
+    assert challenge.json()["data"]["mfa_required"] is True
+    assert "access_token" not in challenge.json()["data"]
+    assert "refresh_token=" not in challenge.headers.get("set-cookie", "")
+    challenge_id = challenge.json()["data"]["challenge_id"]
+    code_a = sent["otp"][-1][1]
+    assert sent["otp"][-1][0] == a
+    token_b = token_from_link(sent["verify"][1][1], "verify_token")
+    assert (await client.post("/api/v1/auth/verify", json={"token": token_b})).status_code == 200
+    challenge_b = await client.post("/api/v1/auth/login", json={
+        "email": b, "password": "SecurePassword123",
+    })
+    assert challenge_b.status_code == 200
+    code_b = sent["otp"][-1][1]
+    wrong_account_code = code_b if code_b != code_a else "999999" if code_a != "999999" else "888888"
+    cross_account = await client.post("/api/v1/auth/verify-login-otp", json={
+        "challenge_id": challenge_id, "otp": wrong_account_code,
+    })
+    assert cross_account.status_code == 401
+    swapped = await client.post("/api/v1/auth/verify-login-otp", json={
+        "challenge_id": challenge_id, "otp": code_a, "email": b,
+    })
+    assert swapped.status_code == 422
+    signed_in = await client.post("/api/v1/auth/verify-login-otp", json={
+        "challenge_id": challenge_id, "otp": code_a,
     })
     assert signed_in.status_code == 200
     assert signed_in.json()["data"]["user"]["email"] == a
@@ -159,13 +181,79 @@ async def test_verification_link_is_required_one_time_and_account_bound(auth_set
     })
     assert own_profile.status_code == 200
     assert own_profile.json()["data"]["email"] == a
-    replay = await client.post("/api/v1/auth/email/verify-otp", json={
-        "email": a, "otp": code_a,
+    replay = await client.post("/api/v1/auth/verify-login-otp", json={
+        "challenge_id": challenge_id, "otp": code_a,
     })
-    assert replay.status_code == 400
-    assert (await client.post("/api/v1/auth/login", json={
-        "email": a, "password": "SecurePassword123",
-    })).status_code == 401
+    assert replay.status_code == 401
+
+    old_otp_only = create_access_token({
+        "user_id": str(user_a["_id"]), "email": a, "role": "customer",
+        "auth_version": 1, "amr": ["email_otp"],
+    })
+    denied_old_session = await client.get(
+        "/api/v1/auth/me", headers={"Authorization": f"Bearer {old_otp_only}"}
+    )
+    assert denied_old_session.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_admin_uses_the_same_password_then_otp_flow(auth_setup):
+    client, db, sent = auth_setup
+    admin_email = "owner@example.com"
+    await db.users.insert_one({
+        "name": "Store Owner", "email": admin_email, "role": "admin",
+        "password_hash": hash_password("AdminPassword123"),
+        "is_verified": True, "status": "active", "auth_version": 1,
+    })
+
+    first_step = await client.post("/api/v1/auth/login", json={
+        "email": admin_email, "password": "AdminPassword123",
+    })
+    assert first_step.status_code == 200
+    assert first_step.json()["data"]["mfa_required"] is True
+    assert "access_token" not in first_step.json()["data"]
+    assert "role" not in first_step.json()["data"]["user"]
+    assert sent["otp"][-1][0] == admin_email
+
+    signed_in = await client.post("/api/v1/auth/verify-login-otp", json={
+        "challenge_id": first_step.json()["data"]["challenge_id"],
+        "otp": sent["otp"][-1][1],
+    })
+    assert signed_in.status_code == 200
+    assert signed_in.json()["data"]["user"]["role"] == "admin"
+
+
+@pytest.mark.asyncio
+async def test_login_challenge_locks_and_rejects_stale_account_version(auth_setup):
+    client, db, sent = auth_setup
+    email = "locked-buyer@example.com"
+    assert (await register(client, email)).status_code == 201
+    token = token_from_link(sent["verify"][-1][1], "verify_token")
+    assert (await client.post("/api/v1/auth/verify", json={"token": token})).status_code == 200
+
+    first_step = await client.post("/api/v1/auth/login", json={
+        "email": email, "password": "SecurePassword123",
+    })
+    challenge_id = first_step.json()["data"]["challenge_id"]
+    for _ in range(settings.LOGIN_OTP_MAX_ATTEMPTS):
+        wrong = await client.post("/api/v1/auth/verify-login-otp", json={
+            "challenge_id": challenge_id, "otp": "999999" if sent["otp"][-1][1] != "999999" else "888888",
+        })
+    assert wrong.status_code == 429
+    rejected = await client.post("/api/v1/auth/verify-login-otp", json={
+        "challenge_id": challenge_id, "otp": sent["otp"][-1][1],
+    })
+    assert rejected.status_code == 401
+
+    second_step = await client.post("/api/v1/auth/login", json={
+        "email": email, "password": "SecurePassword123",
+    })
+    next_challenge = second_step.json()["data"]["challenge_id"]
+    await db.users.update_one({"email": email}, {"$inc": {"auth_version": 1}})
+    stale = await client.post("/api/v1/auth/verify-login-otp", json={
+        "challenge_id": next_challenge, "otp": sent["otp"][-1][1],
+    })
+    assert stale.status_code == 401
 
 
 @pytest.mark.asyncio

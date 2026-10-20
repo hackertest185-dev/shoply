@@ -2,12 +2,12 @@ import pytest
 from pydantic import ValidationError
 
 from app.main import app
-from app.schemas.auth_schema import AdminMFAVerifyRequest, ChangePasswordRequest, RegisterRequest
+from app.schemas.auth_schema import LoginOtpVerifyRequest, ChangePasswordRequest, RegisterRequest
 
 
-def test_admin_mfa_schema_requires_six_digit_code():
+def test_login_otp_schema_requires_six_digit_code():
     with pytest.raises(ValidationError):
-        AdminMFAVerifyRequest(challenge_id="a" * 32, otp="123")
+        LoginOtpVerifyRequest(challenge_id="a" * 32, otp="123")
 
 
 def test_password_changes_require_twelve_characters():

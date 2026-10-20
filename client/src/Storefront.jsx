@@ -356,11 +356,9 @@ const api = {
   auth: {
     register:       (body)  => apiFetch("/auth/register",       { method: "POST", body }),
     login:          (body)  => apiFetch("/auth/login",          { method: "POST", body }),
-    verifyAdminMfa: (body)  => apiFetch("/auth/admin/verify-mfa", { method: "POST", body }),
+    verifyLoginOtp: (body)  => apiFetch("/auth/verify-login-otp", { method: "POST", body }),
     verifyAccount: (body)   => apiFetch("/auth/verify", { method: "POST", body }),
     resendVerification: (body) => apiFetch("/auth/resend-verification", { method: "POST", body }),
-    requestEmailOtp: (body) => apiFetch("/auth/email/request-otp", { method: "POST", body }),
-    verifyEmailOtp:  (body) => apiFetch("/auth/email/verify-otp",  { method: "POST", body }),
     logout:         ()      => apiFetch("/auth/logout",         { method: "POST" }),
     refresh:        ()      => silentRefresh(),
     me:             ()      => apiFetch("/auth/me"),
@@ -865,10 +863,8 @@ function Navbar({ state, dispatch, onLogout }) {
 function AuthModal({ state, dispatch }) {
   const { ui } = state;
   const [mode, setMode] = useState(ui.authModal || "login");
-  const [method, setMethod] = useState(ui.authModal === "register" ? "password" : "otp");
-  const [otpStep, setOtpStep] = useState(false);
-  const [adminMfaStep, setAdminMfaStep] = useState(false);
-  const [adminChallengeId, setAdminChallengeId] = useState("");
+  const [loginOtpStep, setLoginOtpStep] = useState(false);
+  const [challengeId, setChallengeId] = useState("");
   const [otp, setOtp] = useState("");
   const [form, setForm] = useState({ name: "", email: "", password: "", role: "customer" });
   const [errors, setErrors] = useState({});
@@ -879,10 +875,8 @@ function AuthModal({ state, dispatch }) {
 
   useEffect(() => {
     setMode(ui.authModal || "login");
-    setMethod(ui.authModal === "register" ? "password" : "otp");
-    setOtpStep(false);
-    setAdminMfaStep(false);
-    setAdminChallengeId("");
+    setLoginOtpStep(false);
+    setChallengeId("");
     setOtp("");
     setErrors({});
     setServerError("");
@@ -907,10 +901,10 @@ function AuthModal({ state, dispatch }) {
       return false;
     }
     if (res.data?.mfa_required) {
-      setAdminMfaStep(true);
-      setAdminChallengeId(res.data.challenge_id);
+      setLoginOtpStep(true);
+      setChallengeId(res.data.challenge_id);
       setOtp("");
-      setServerError("A verification code was sent to the admin email.");
+      setSuccessMessage("A sign-in code was sent to your email. Enter it to continue.");
       return false;
     }
     const { access_token, user } = res.data;
@@ -930,20 +924,24 @@ function AuthModal({ state, dispatch }) {
     const identityErrors = {};
     if (!form.email.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) identityErrors.email = "Invalid email format";
     if (mode === "register" && form.name.trim().length < 2) identityErrors.name = "Name must be at least 2 characters";
-    if (form.password.length < 12) identityErrors.password = "Password must be at least 12 characters";
+    if (mode === "register" && form.password.length < 12) identityErrors.password = "Password must be at least 12 characters";
+    if (mode === "login" && !form.password) identityErrors.password = "Enter your password";
     if (form.password.length > 72) identityErrors.password = "Password must be at most 72 characters";
     setErrors(identityErrors);
     if (Object.keys(identityErrors).length) return;
-    setLoading(true); setServerError("");
+    setLoading(true); setServerError(""); setSuccessMessage("");
     try {
       let res = mode === "login"
         ? await api.auth.login({ email: form.email, password: form.password })
         : await api.auth.register({ name: form.name, email: form.email, password: form.password });
       if (mode === "register" && res.success) {
         setMode("login");
-        setMethod("otp");
-        setSuccessMessage("Check your email and click the verification link. Then request a sign-in code here.");
+        setSuccessMessage("Account created. Open the verification link in your email, then sign in with your email and password.");
         setForm(p => ({ ...p, password: "" }));
+        return;
+      }
+      if (!res.success && res.error?.code === "EMAIL_NOT_VERIFIED") {
+        setServerError("Verify your email before signing in. Open the link we sent or request a new one below.");
         return;
       }
       finishLogin(res);
@@ -952,51 +950,14 @@ function AuthModal({ state, dispatch }) {
     }
   };
 
-  const handleAdminMfa = async () => {
-    if (!/^\d{6}$/.test(otp)) {
-      setServerError("Enter the 6-digit code sent to the admin email.");
-      return;
-    }
-    setLoading(true); setServerError("");
-    try {
-      const res = await api.auth.verifyAdminMfa({ challenge_id: adminChallengeId, otp });
-      finishLogin(res);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleRequestOtp = async () => {
-    if (!validateIdentity()) return;
-    setLoading(true); setServerError("");
-    try {
-      const res = await api.auth.requestEmailOtp({
-        email: form.email,
-        mode: "login",
-      });
-      if (res.success) {
-        setOtpStep(true);
-        setOtp("");
-      } else {
-        setServerError(res.error?.message || "Could not send the verification code.");
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleVerifyOtp = async () => {
+  const handleLoginOtp = async () => {
     if (!/^\d{6}$/.test(otp)) {
       setServerError("Enter the 6-digit code sent to your email.");
       return;
     }
     setLoading(true); setServerError("");
     try {
-      const res = await api.auth.verifyEmailOtp({
-        email: form.email,
-        otp,
-        mode: "login",
-      });
+      const res = await api.auth.verifyLoginOtp({ challenge_id: challengeId, otp });
       finishLogin(res);
     } finally {
       setLoading(false);
@@ -1005,10 +966,8 @@ function AuthModal({ state, dispatch }) {
 
   const switchMode = (nextMode) => {
     setMode(nextMode);
-    setMethod(nextMode === "register" ? "password" : "otp");
-    setOtpStep(false);
-    setAdminMfaStep(false);
-    setAdminChallengeId("");
+    setLoginOtpStep(false);
+    setChallengeId("");
     setOtp("");
     setErrors({});
     setServerError("");
@@ -1021,12 +980,13 @@ function AuthModal({ state, dispatch }) {
     setLoading(true); setServerError("");
     const res = await api.auth.forgotPassword({ email: form.email });
     setLoading(false);
-    setServerError(res.success ? "If this email exists, a reset link was sent. Check your inbox and spam folder." : (res.error?.message || "Could not request a reset link."));
+    if (res.success) setSuccessMessage("If this email has an account, a reset link was sent. Check your inbox and spam folder.");
+    else setServerError(res.error?.message || "Could not request a reset link.");
   };
 
   return (
     <Modal isOpen={!!ui.authModal} onClose={close} title="">
-      {!forgotMode && <div style={{ display: "flex", gap: "0", marginBottom: "24px", borderBottom: "1px solid var(--navy-border)" }}>
+      {!forgotMode && !loginOtpStep && <div style={{ display: "flex", gap: "0", marginBottom: "24px", borderBottom: "1px solid var(--navy-border)" }}>
         {["login", "register"].map(m => (
           <button key={m} onClick={() => switchMode(m)} style={{
             flex: 1, padding: "10px", background: "none", border: "none",
@@ -1041,17 +1001,17 @@ function AuthModal({ state, dispatch }) {
       </div>}
 
       <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-        {!forgotMode && mode === "register" && (
+        {!forgotMode && !loginOtpStep && mode === "register" && (
           <Input label="Full Name" value={form.name} onChange={e => updateForm("name", e.target.value)} placeholder="Jane Smith" error={errors.name} required />
         )}
-        {!forgotMode && !adminMfaStep && <Input label="Email" type="email" value={form.email} onChange={e => updateForm("email", e.target.value)} placeholder="you@example.com" error={errors.email} required disabled={otpStep} />}
+        {!forgotMode && !loginOtpStep && <Input label="Email" type="email" value={form.email} onChange={e => updateForm("email", e.target.value)} placeholder="you@example.com" error={errors.email} required />}
 
-        {!forgotMode && adminMfaStep && <>
-          <h2 style={{ fontFamily: "var(--font-serif)", fontSize: 24, margin: 0 }}>Admin verification</h2>
-          <p style={{ color: "var(--muted)", fontSize: 13, lineHeight: 1.5 }}>Enter the one-time code sent after your password was verified. The code expires in 5 minutes.</p>
-          <Input label="Admin verification code" value={otp} onChange={e => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="123456" inputMode="numeric" autoComplete="one-time-code" />
-          <Btn full size="lg" onClick={handleAdminMfa} disabled={loading || otp.length !== 6}>{loading ? <Spinner size={18} color="#0a0f1e" /> : "Verify admin access"}</Btn>
-          <button onClick={() => { setAdminMfaStep(false); setAdminChallengeId(""); setOtp(""); setServerError(""); }} style={{ background: "none", border: "none", color: "var(--muted)", fontSize: 13, cursor: "pointer", textDecoration: "underline" }}>Start over</button>
+        {!forgotMode && loginOtpStep && <>
+          <h2 style={{ fontFamily: "var(--font-serif)", fontSize: 24, margin: 0 }}>Check your email</h2>
+          <p style={{ color: "var(--muted)", fontSize: 13, lineHeight: 1.5 }}>Enter the 6-digit code sent to {form.email}. It expires in 5 minutes.</p>
+          <Input label="Sign-in code" value={otp} onChange={e => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="123456" inputMode="numeric" autoComplete="one-time-code" />
+          <Btn full size="lg" onClick={handleLoginOtp} disabled={loading || otp.length !== 6}>{loading ? <Spinner size={18} color="#0a0f1e" /> : "Verify and sign in"}</Btn>
+          <button onClick={() => { setLoginOtpStep(false); setChallengeId(""); setOtp(""); setServerError(""); setSuccessMessage(""); }} style={{ background: "none", border: "none", color: "var(--muted)", fontSize: 13, cursor: "pointer", textDecoration: "underline" }}>Start over</button>
         </>}
 
         {forgotMode && <>
@@ -1062,47 +1022,18 @@ function AuthModal({ state, dispatch }) {
           <button onClick={() => setForgotMode(false)} style={{ background: "none", border: "none", color: "var(--muted)", fontSize: 13, cursor: "pointer", textDecoration: "underline" }}>Back to sign in</button>
         </>}
 
-        {!forgotMode && !adminMfaStep && method === "password" && (
+        {!forgotMode && !loginOtpStep && (
           <>
-            {mode === "login" && <p style={{ fontSize: 13, color: "var(--muted)", margin: 0 }}>Admin sign-in requires your password and an email code.</p>}
-            {mode === "register" && <p style={{ fontSize: 13, color: "var(--muted)", margin: 0 }}>We will email you a verification link. Open it before signing in with a code.</p>}
-            <Input label="Password" type="password" value={form.password} onChange={e => updateForm("password", e.target.value)} placeholder={mode === "login" ? "Admin password" : "Min 12 characters"} error={errors.password} required />
+            {mode === "login" && <p style={{ fontSize: 13, color: "var(--muted)", margin: 0 }}>Enter your email and password. We will then send a one-time code to your verified email.</p>}
+            {mode === "register" && <p style={{ fontSize: 13, color: "var(--muted)", margin: 0 }}>We will email you a verification link. Open it before signing in.</p>}
+            <Input label="Password" type="password" value={form.password} onChange={e => updateForm("password", e.target.value)} placeholder={mode === "login" ? "Your password" : "Min 12 characters"} error={errors.password} required />
             <Btn full size="lg" onClick={handlePasswordSubmit} disabled={loading}>
-              {loading ? <Spinner size={18} color="#0a0f1e" /> : (mode === "login" ? "Continue as admin" : "Create Account")}
+              {loading ? <Spinner size={18} color="#0a0f1e" /> : (mode === "login" ? "Continue" : "Create Account")}
             </Btn>
-            {mode === "login" && <button onClick={() => { setMethod("otp"); setOtpStep(false); setServerError(""); setErrors({}); }} style={{ background: "none", border: "1px solid var(--navy-border)", borderRadius: "var(--radius-sm)", color: "var(--amber)", padding: "11px", fontSize: "13px", cursor: "pointer", fontFamily: "var(--font-sans)" }}>Sign in with email code</button>}
-          </>
-        )}
-
-        {!forgotMode && !adminMfaStep && method === "otp" && !otpStep && (
-          <>
-            <p style={{ fontSize: "13px", color: "var(--muted)", lineHeight: 1.5, margin: 0 }}>
-              We will send a 6-digit sign-in code to your verified email address.
-            </p>
-            <Btn full size="lg" onClick={handleRequestOtp} disabled={loading}>
-              {loading ? <Spinner size={18} color="#0a0f1e" /> : "Send email code"}
-            </Btn>
-            <button onClick={() => { setMethod("password"); setServerError(""); }} style={{ background: "none", border: "none", color: "var(--muted)", fontSize: "13px", cursor: "pointer", textDecoration: "underline" }}>
-              Admin sign in
-            </button>
-            <button onClick={async () => { if (!validateIdentity()) return; const res = await api.auth.resendVerification({ email: form.email }); setSuccessMessage(res.success ? "If your account needs verification, a new link has been sent." : (res.error?.message || "Please try again later.")); }} style={{ background: "none", border: "none", color: "var(--muted)", fontSize: "13px", cursor: "pointer", textDecoration: "underline" }}>
+            {mode === "login" && <button onClick={() => { setForgotMode(true); setServerError(""); setSuccessMessage(""); }} style={{ background: "none", border: "none", color: "var(--muted)", fontSize: "13px", cursor: "pointer", textDecoration: "underline" }}>Forgot password?</button>}
+            {mode === "login" && <button onClick={async () => { if (!validateIdentity()) return; const res = await api.auth.resendVerification({ email: form.email }); setSuccessMessage(res.success ? "If your account needs verification, a new link has been sent." : (res.error?.message || "Please try again later.")); }} style={{ background: "none", border: "none", color: "var(--muted)", fontSize: "13px", cursor: "pointer", textDecoration: "underline" }}>
               Need a new verification link?
-            </button>
-          </>
-        )}
-
-        {!forgotMode && !adminMfaStep && method === "otp" && otpStep && (
-          <>
-            <p style={{ fontSize: "13px", color: "var(--muted)", lineHeight: 1.5, margin: 0 }}>
-              Enter the 6-digit code sent to <strong style={{ color: "var(--white)" }}>{form.email}</strong>.
-            </p>
-            <Input label="Verification code" value={otp} onChange={e => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="123456" inputMode="numeric" autoComplete="one-time-code" />
-            <Btn full size="lg" onClick={handleVerifyOtp} disabled={loading || otp.length !== 6}>
-              {loading ? <Spinner size={18} color="#0a0f1e" /> : "Verify and continue"}
-            </Btn>
-            <button onClick={() => { setOtpStep(false); setOtp(""); setServerError(""); }} style={{ background: "none", border: "none", color: "var(--muted)", fontSize: "13px", cursor: "pointer", textDecoration: "underline" }}>
-              Send a new code
-            </button>
+            </button>}
           </>
         )}
 
@@ -1111,10 +1042,7 @@ function AuthModal({ state, dispatch }) {
             {serverError}
           </div>
         )}
-        {successMessage && <div style={{ background: "#1d8a641c", border: "1px solid var(--success)", borderRadius: "var(--radius-sm)", padding: "10px 14px", fontSize: 13, color: "var(--success)" }}>
-          {successMessage}
-          <button onClick={async () => { const res = await api.auth.resendVerification({ email: form.email }); setSuccessMessage(res.success ? "If your email still needs verification, a new link has been sent." : (res.error?.message || "Please try again later.")); }} style={{ display: "block", marginTop: 10, border: 0, padding: 0, background: "none", color: "var(--amber)", textDecoration: "underline", cursor: "pointer" }}>Resend verification email</button>
-        </div>}
+        {successMessage && <div style={{ background: "#1d8a641c", border: "1px solid var(--success)", borderRadius: "var(--radius-sm)", padding: "10px 14px", fontSize: 13, color: "var(--success)" }}>{successMessage}</div>}
 
         <p style={{ fontSize: "12px", color: "var(--muted)", textAlign: "center" }}>
           By continuing you agree to our Terms of Service and Privacy Policy.
@@ -2581,14 +2509,14 @@ function VerifyAccountPage({ dispatch, token }) {
     if (!token) { setMessage("This verification link is invalid or expired."); return; }
     api.auth.verifyAccount({ token }).then(res => {
       setVerified(!!res.success);
-      setMessage(res.success ? "Your email is verified. You can now sign in with an email code." : (res.error?.message || "This verification link is invalid or expired."));
+      setMessage(res.success ? "Your email is verified. Sign in with your email and password, then enter the code we send you." : (res.error?.message || "This verification link is invalid or expired."));
     });
   }, [token]);
   return <main style={{ maxWidth: 520, margin: "0 auto", padding: "90px 24px 120px" }}>
     <div className="shop-kicker">SHOPLY ACCOUNT</div>
     <h1 className="shop-section-title" style={{ fontFamily: "var(--font-serif)", fontSize: 46 }}>Email verification</h1>
     <p style={{ color: verified ? "var(--success)" : "var(--muted)", margin: "24px 0", lineHeight: 1.7 }}>{message}</p>
-    <Btn onClick={() => dispatch({ type: "AUTH_MODAL", mode: "login" })}>Sign in with email code</Btn>
+    <Btn onClick={() => dispatch({ type: "AUTH_MODAL", mode: "login" })}>Sign in</Btn>
   </main>;
 }
 

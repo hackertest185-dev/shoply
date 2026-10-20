@@ -87,6 +87,8 @@ class Settings(BaseSettings):
     EMAIL_OTP_TTL_SECONDS: int = 600
     EMAIL_OTP_MAX_ATTEMPTS: int = 5
     EMAIL_VERIFICATION_TTL_SECONDS: int = 24 * 60 * 60
+    LOGIN_OTP_TTL_SECONDS: int = 300
+    LOGIN_OTP_MAX_ATTEMPTS: int = 5
 
     # ── Rate limits (used in slowapi decorators) ──────────────────────────────
     RATE_LIMIT_LOGIN: str = "5/15minute"
@@ -122,6 +124,10 @@ class Settings(BaseSettings):
             raise RuntimeError("ADMIN_MFA_TTL_SECONDS must be 15 minutes or less.")
         if self.ADMIN_MFA_MAX_ATTEMPTS < 1 or self.ADMIN_MFA_MAX_ATTEMPTS > 10:
             raise RuntimeError("ADMIN_MFA_MAX_ATTEMPTS must be between 1 and 10.")
+        if self.LOGIN_OTP_TTL_SECONDS < 60 or self.LOGIN_OTP_TTL_SECONDS > 900:
+            raise RuntimeError("LOGIN_OTP_TTL_SECONDS must be between 60 and 900.")
+        if self.LOGIN_OTP_MAX_ATTEMPTS < 1 or self.LOGIN_OTP_MAX_ATTEMPTS > 10:
+            raise RuntimeError("LOGIN_OTP_MAX_ATTEMPTS must be between 1 and 10.")
         if self.PASSWORD_MIN_LENGTH < 12:
             raise RuntimeError("PASSWORD_MIN_LENGTH must be at least 12.")
 

@@ -31,9 +31,9 @@ async def send_email_otp(recipient: str, otp: str) -> None:
     await asyncio.to_thread(
         _send_sync,
         recipient,
-        f"Your {settings.EMAIL_FROM_NAME} verification code",
-        f"Your Shoply verification code is {otp}. It expires in {settings.EMAIL_OTP_TTL_SECONDS // 60} minutes.",
-        f"<p>Your Shoply verification code is:</p><p style='font-size:28px;font-weight:700;letter-spacing:8px'>{html.escape(otp)}</p><p>This code expires in {settings.EMAIL_OTP_TTL_SECONDS // 60} minutes.</p>",
+        f"Your {settings.EMAIL_FROM_NAME} sign-in code",
+        f"Your Shoply sign-in code is {otp}. It expires in {settings.LOGIN_OTP_TTL_SECONDS // 60} minutes.",
+        f"<p>Your Shoply sign-in code is:</p><p style='font-size:28px;font-weight:700;letter-spacing:8px'>{html.escape(otp)}</p><p>This code expires in {settings.LOGIN_OTP_TTL_SECONDS // 60} minutes.</p>",
     )
 
 
