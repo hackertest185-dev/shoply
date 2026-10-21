@@ -34,4 +34,4 @@ Pillow==13.0.0             # Security fixes; decode and re-encode uploads
 reportlab==4.4.4
 
 # ── Email ─────────────────────────────────────────────────
-sendgrid==6.11.0
+sendgrid==6.12.5
