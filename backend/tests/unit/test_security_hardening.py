@@ -20,7 +20,7 @@ def test_public_registration_cannot_create_admin():
         RegisterRequest(
             name="Attacker",
             email="attacker@example.com",
-            password="StrongPassword123",
+            password="StrongPassword123!",
             role="admin",
         )
 

@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -133,6 +134,17 @@ async def add_security_headers(request: Request, call_next):
 
 
 # ── Global exception handler ──────────────────────────────────────────────────
+@app.exception_handler(RequestValidationError)
+async def request_validation_handler(request: Request, exc: RequestValidationError):
+    # Pydantic's default input/ctx fields can echo passwords and recovery tokens.
+    errors = [{"loc": error["loc"], "type": error["type"], "msg": error["msg"]} for error in exc.errors()]
+    return JSONResponse(status_code=422, content={
+        "success": False,
+        "error": {"code": "VALIDATION_ERROR", "message": errors[0]["msg"] if errors else "Check the submitted fields."},
+        "detail": errors,
+    })
+
+
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))

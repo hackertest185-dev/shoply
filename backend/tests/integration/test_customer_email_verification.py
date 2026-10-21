@@ -91,10 +91,22 @@ def token_from_link(link, field):
     return parse_qs(urlparse(link).fragment)[field][0]
 
 
-async def register(client, email, password="SecurePassword123"):
+async def register(client, email, password="SecurePassword123!"):
     return await client.post("/api/v1/auth/register", json={
         "name": "Test Buyer", "email": email, "password": password,
     })
+
+
+@pytest.mark.asyncio
+async def test_weak_password_cannot_register_through_api_or_echo_secrets(auth_setup):
+    client, db, sent = auth_setup
+    password = "LongPassword123"
+    response = await register(client, "weak@example.com", password)
+    assert response.status_code == 422
+    assert password not in response.text
+    assert "symbol" in response.json()["error"]["message"]
+    assert await db.users.find_one({"email": "weak@example.com"}) is None
+    assert sent["verify"] == []
 
 
 @pytest.mark.asyncio
@@ -116,7 +128,7 @@ async def test_verification_link_is_required_one_time_and_account_bound(auth_set
     denied = await client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {forged_claim}"})
     assert denied.status_code == 401
     password_login = await client.post("/api/v1/auth/login", json={
-        "email": a, "password": "SecurePassword123",
+        "email": a, "password": "SecurePassword123!",
     })
     assert password_login.status_code == 403
     assert "access_token" not in password_login.text
@@ -131,7 +143,7 @@ async def test_verification_link_is_required_one_time_and_account_bound(auth_set
 
     injected = await client.post("/api/v1/auth/register", json={
         "name": "Injected", "email": "evil@example.com",
-        "password": "SecurePassword123", "is_verified": True,
+        "password": "SecurePassword123!", "is_verified": True,
     })
     assert injected.status_code == 422
     for old_path in ("/email/request-otp", "/email/verify-otp", "/admin/verify-mfa"):
@@ -145,7 +157,7 @@ async def test_verification_link_is_required_one_time_and_account_bound(auth_set
     assert sent["otp"] == []
 
     challenge = await client.post("/api/v1/auth/login", json={
-        "email": a, "password": "SecurePassword123",
+        "email": a, "password": "SecurePassword123!",
     })
     assert challenge.status_code == 200
     assert challenge.json()["data"]["mfa_required"] is True
@@ -157,7 +169,7 @@ async def test_verification_link_is_required_one_time_and_account_bound(auth_set
     token_b = token_from_link(sent["verify"][1][1], "verify_token")
     assert (await client.post("/api/v1/auth/verify", json={"token": token_b})).status_code == 200
     challenge_b = await client.post("/api/v1/auth/login", json={
-        "email": b, "password": "SecurePassword123",
+        "email": b, "password": "SecurePassword123!",
     })
     assert challenge_b.status_code == 200
     code_b = sent["otp"][-1][1]
@@ -232,7 +244,7 @@ async def test_login_challenge_locks_and_rejects_stale_account_version(auth_setu
     assert (await client.post("/api/v1/auth/verify", json={"token": token})).status_code == 200
 
     first_step = await client.post("/api/v1/auth/login", json={
-        "email": email, "password": "SecurePassword123",
+        "email": email, "password": "SecurePassword123!",
     })
     challenge_id = first_step.json()["data"]["challenge_id"]
     for _ in range(settings.LOGIN_OTP_MAX_ATTEMPTS):
@@ -246,7 +258,7 @@ async def test_login_challenge_locks_and_rejects_stale_account_version(auth_setu
     assert rejected.status_code == 401
 
     second_step = await client.post("/api/v1/auth/login", json={
-        "email": email, "password": "SecurePassword123",
+        "email": email, "password": "SecurePassword123!",
     })
     next_challenge = second_step.json()["data"]["challenge_id"]
     await db.users.update_one({"email": email}, {"$inc": {"auth_version": 1}})
@@ -270,17 +282,17 @@ async def test_reset_link_cannot_be_swapped_to_another_account(auth_setup):
     assert (await client.post("/api/v1/auth/forgot-password", json={"email": a})).status_code == 200
     reset_token = token_from_link(sent["reset"][-1][1].splitlines()[-1], "reset_token")
     swapped = await client.post("/api/v1/auth/reset-password", json={
-        "token": reset_token, "new_password": "DifferentPassword123", "email": b,
+        "token": reset_token, "new_password": "DifferentPassword123!", "email": b,
     })
     assert swapped.status_code == 422
     completed = await client.post("/api/v1/auth/reset-password", json={
-        "token": reset_token, "new_password": "DifferentPassword123",
+        "token": reset_token, "new_password": "DifferentPassword123!",
     })
     assert completed.status_code == 200
-    assert verify_password("DifferentPassword123", (await db.users.find_one({"email": a}))["password_hash"])
+    assert verify_password("DifferentPassword123!", (await db.users.find_one({"email": a}))["password_hash"])
     assert (await db.users.find_one({"email": b}))["password_hash"] == original_b
     replay = await client.post("/api/v1/auth/reset-password", json={
-        "token": reset_token, "new_password": "AnotherPassword123",
+        "token": reset_token, "new_password": "AnotherPassword123!",
     })
     assert replay.status_code == 400
 
@@ -289,7 +301,7 @@ async def test_reset_link_cannot_be_swapped_to_another_account(auth_setup):
     user_a = await db.users.find_one({"email": a})
     await db.users.update_one({"_id": user_a["_id"]}, {"$inc": {"auth_version": 1}})
     assert (await client.post("/api/v1/auth/reset-password", json={
-        "token": stale, "new_password": "AnotherPassword123",
+        "token": stale, "new_password": "AnotherPassword123!",
     })).status_code == 400
 
 

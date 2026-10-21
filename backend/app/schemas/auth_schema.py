@@ -4,13 +4,15 @@ Pydantic v2 request/response models for all auth endpoints.
 ConfigDict(extra="forbid") on all request schemas — extra fields rejected.
 """
 from enum import Enum
+import string
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from app.core.config import settings
 
 
 _COMMON_PASSWORDS = {
     "passwordpassword", "password1234", "123456789012", "qwertyuiop12",
-    "letmein123456", "adminadmin1234", "welcome123456",
+    "letmein123456", "adminadmin1234", "welcome123456", "welcome12345",
+    "password123", "password12345", "admin123456", "shoply123456", "qwerty123456",
 }
 
 
@@ -19,10 +21,19 @@ def _validate_password(value: str) -> str:
         raise ValueError("Password cannot start or end with spaces")
     if len(value) < settings.PASSWORD_MIN_LENGTH:
         raise ValueError(f"Password must be at least {settings.PASSWORD_MIN_LENGTH} characters")
-    if value.lower() in _COMMON_PASSWORDS:
+    if len(value.encode("utf-8")) > 72:
+        raise ValueError("Password must be at most 72 UTF-8 bytes; use fewer characters")
+    normalized = "".join(char for char in value.lower() if char.isascii() and char.isalnum())
+    if normalized in _COMMON_PASSWORDS:
         raise ValueError("Choose a less common password")
-    if not any(char.isalpha() for char in value) or not any(char.isdigit() for char in value):
-        raise ValueError("Password must contain letters and numbers")
+    if not any(char in string.ascii_uppercase for char in value):
+        raise ValueError("Add an uppercase letter (A-Z)")
+    if not any(char in string.ascii_lowercase for char in value):
+        raise ValueError("Add a lowercase letter (a-z)")
+    if not any(char in string.digits for char in value):
+        raise ValueError("Add a number (0-9)")
+    if not any(char in string.punctuation for char in value):
+        raise ValueError("Add a symbol, such as @, # or !")
     return value
 
 

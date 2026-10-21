@@ -1,6 +1,8 @@
 import { useState, useEffect, useReducer, useContext, createContext, useCallback, useRef, useId } from "react";
 import { useSelector, useDispatch as useReduxDispatch } from 'react-redux';
 import { logoutUser } from './features/auth/authSlice';
+import PasswordStrength from './components/PasswordStrength';
+import { getPasswordFeedback } from './utils/passwordPolicy';
 
 const formatMoney = amount => `${Number(amount || 0).toLocaleString('en-EG', { maximumFractionDigits: 2 })} EGP`;
 
@@ -924,7 +926,7 @@ function AuthModal({ state, dispatch }) {
     const identityErrors = {};
     if (!form.email.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) identityErrors.email = "Invalid email format";
     if (mode === "register" && form.name.trim().length < 2) identityErrors.name = "Name must be at least 2 characters";
-    if (mode === "register" && form.password.length < 12) identityErrors.password = "Password must be at least 12 characters";
+    if (mode === "register" && !getPasswordFeedback(form.password).ready) identityErrors.password = getPasswordFeedback(form.password).message;
     if (mode === "login" && !form.password) identityErrors.password = "Enter your password";
     if (form.password.length > 72) identityErrors.password = "Password must be at most 72 characters";
     setErrors(identityErrors);
@@ -1026,7 +1028,8 @@ function AuthModal({ state, dispatch }) {
           <>
             {mode === "login" && <p style={{ fontSize: 13, color: "var(--muted)", margin: 0 }}>Enter your email and password. We will then send a one-time code to your verified email.</p>}
             {mode === "register" && <p style={{ fontSize: 13, color: "var(--muted)", margin: 0 }}>We will email you a verification link. Open it before signing in.</p>}
-            <Input label="Password" type="password" value={form.password} onChange={e => updateForm("password", e.target.value)} placeholder={mode === "login" ? "Your password" : "Min 12 characters"} error={errors.password} required />
+            <Input label="Password" type="password" value={form.password} onChange={e => { updateForm("password", e.target.value); setErrors(previous => ({ ...previous, password: "" })); }} placeholder={mode === "login" ? "Your password" : "Create a strong password"} autoComplete={mode === "login" ? "current-password" : "new-password"} error={errors.password} required />
+            {mode === "register" && <PasswordStrength password={form.password} />}
             <Btn full size="lg" onClick={handlePasswordSubmit} disabled={loading}>
               {loading ? <Spinner size={18} color="#0a0f1e" /> : (mode === "login" ? "Continue" : "Create Account")}
             </Btn>
@@ -2526,14 +2529,16 @@ function ResetPasswordPage({ dispatch, token }) {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const submit = async () => {
-    if (password.length < 12 || password !== confirm) { setMessage("Use at least 12 characters and make both passwords match."); return; }
+    const feedback = getPasswordFeedback(password);
+    if (!feedback.ready) { setMessage(feedback.message); return; }
+    if (password !== confirm) { setMessage("Both passwords must match."); return; }
     setLoading(true); setMessage("");
     const res = await api.auth.resetPassword({ token, new_password: password });
     setLoading(false);
     if (res.success) { setMessage("Password reset. You can sign in now."); window.history.replaceState({}, "", "/"); window.setTimeout(() => dispatch({ type: "AUTH_MODAL", mode: "login" }), 700); }
     else setMessage(res.error?.message || "This reset link is invalid or expired.");
   };
-  return <main style={{ maxWidth: 520, margin: "0 auto", padding: "90px 24px 120px" }}><div className="shop-kicker">SHOPLY ACCOUNT</div><h1 className="shop-section-title" style={{ fontFamily: "var(--font-serif)", fontSize: 46 }}>Choose a new password</h1><div style={{ display: "grid", gap: 14, marginTop: 24 }}><Input label="New password" type="password" value={password} onChange={event => setPassword(event.target.value)} /><Input label="Confirm password" type="password" value={confirm} onChange={event => setConfirm(event.target.value)} />{message && <p style={{ color: message.startsWith("Password reset") ? "var(--success)" : "var(--danger)", fontSize: 13 }}>{message}</p>}<Btn full size="lg" onClick={submit} disabled={loading || !token}>{loading ? "Saving…" : "Set new password"}</Btn></div></main>;
+  return <main style={{ maxWidth: 520, margin: "0 auto", padding: "90px 24px 120px" }}><div className="shop-kicker">SHOPLY ACCOUNT</div><h1 className="shop-section-title" style={{ fontFamily: "var(--font-serif)", fontSize: 46 }}>Choose a new password</h1><div style={{ display: "grid", gap: 14, marginTop: 24 }}><Input label="New password" type="password" value={password} autoComplete="new-password" onChange={event => { setPassword(event.target.value); setMessage(""); }} /><PasswordStrength password={password} /><Input label="Confirm password" type="password" value={confirm} autoComplete="new-password" onChange={event => setConfirm(event.target.value)} />{message && <p style={{ color: message.startsWith("Password reset") ? "var(--success)" : "var(--danger)", fontSize: 13 }}>{message}</p>}<Btn full size="lg" onClick={submit} disabled={loading || !token}>{loading ? "Saving…" : "Set new password"}</Btn></div></main>;
 }
 
 // APP INITIALIZER — attempts silent refresh on load

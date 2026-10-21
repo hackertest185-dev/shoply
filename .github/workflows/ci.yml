@@ -66,6 +66,10 @@ jobs:
         working-directory: client
         run: npm run lint
 
+      - name: Password policy tests
+        working-directory: client
+        run: npm test
+
       - name: Build
         working-directory: client
         run: npm run build

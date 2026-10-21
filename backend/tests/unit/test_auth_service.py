@@ -61,7 +61,7 @@ def test_register_schema_rejects_admin_role():
     from pydantic import ValidationError
     from app.schemas.auth_schema import RegisterRequest
     with pytest.raises(ValidationError):
-        RegisterRequest(name="Eve", email="eve@x.com", password="password123", role="admin")
+        RegisterRequest(name="Eve", email="eve@x.com", password="MapleRiver9@", role="admin")
 
 
 def test_register_schema_rejects_short_password():
@@ -76,7 +76,7 @@ def test_register_schema_rejects_extra_fields():
     from app.schemas.auth_schema import RegisterRequest
     with pytest.raises(ValidationError):
         RegisterRequest(
-            name="Eve", email="eve@x.com", password="password123",
+            name="Eve", email="eve@x.com", password="MapleRiver9@",
             role="customer", malicious_field="inject"
         )
 

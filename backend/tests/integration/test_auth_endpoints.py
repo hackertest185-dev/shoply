@@ -44,7 +44,7 @@ async def test_register_returns_201(client):
     r = await client.post("/api/v1/auth/register", json={
         "name": "Test User",
         "email": "testuser@example.com",
-        "password": "SecurePass99",
+        "password": "SecurePass99!",
         "role": "customer",
     })
     assert r.status_code in (201, 409)   # 409 if already exists in test run
@@ -74,7 +74,7 @@ async def test_register_rejects_admin_role(client):
     r = await client.post("/api/v1/auth/register", json={
         "name": "Hacker",
         "email": "hacker@evil.com",
-        "password": "password123",
+        "password": "MapleRiver9@",
         "role": "admin",
     })
     assert r.status_code == 422
@@ -85,7 +85,7 @@ async def test_register_rejects_extra_fields(client):
     r = await client.post("/api/v1/auth/register", json={
         "name": "Test",
         "email": "test2@example.com",
-        "password": "password123",
+        "password": "MapleRiver9@",
         "role": "customer",
         "is_admin": True,   # Injected extra field
     })
