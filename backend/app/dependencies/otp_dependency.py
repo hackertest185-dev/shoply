@@ -4,7 +4,7 @@ Validates OTP from Redis before allowing delivery completion steps.
 Reads the 'otp' field from the request body, validated against the
 bcrypt hash stored in Redis for the given order_id.
 """
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request
 from bson import ObjectId
 
 from app.core.database import get_db

@@ -26,8 +26,6 @@ async def list_wishlist(
     current_user: dict = Depends(require_customer),
     db=Depends(get_db),
 ):
-    if not ObjectId.is_valid(product_id):
-        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
     products = await wishlist_service.list_wishlist_products(db, current_user["user_id"])
     return _ok(products)
 
