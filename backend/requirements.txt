@@ -28,7 +28,7 @@ botocore==1.35.86
 
 # ── Content sanitization ──────────────────────────────────
 bleach==6.4.0
-Pillow==12.3.0             # Python 3.14 wheels; decode and re-encode uploads
+Pillow==13.0.0             # Security fixes; decode and re-encode uploads
 
 # ── Customer receipts ────────────────────────────────────
 reportlab==4.4.4
