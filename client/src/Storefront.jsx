@@ -1,6 +1,6 @@
 import { useState, useEffect, useReducer, useContext, createContext, useCallback, useRef, useId } from "react";
 import { useSelector, useDispatch as useReduxDispatch } from 'react-redux';
-import { logoutUser } from './features/auth/authSlice';
+import { logoutUser, sessionEstablished } from './features/auth/authSlice';
 import PasswordStrength from './components/PasswordStrength';
 import { getPasswordFeedback } from './utils/passwordPolicy';
 
@@ -378,6 +378,8 @@ const api = {
     reviews: {
       list:   (id, p) => apiFetch(`/products/${id}/reviews?` + new URLSearchParams(p)),
       create: (id, b) => apiFetch(`/products/${id}/reviews`,   { method: "POST", body: b }),
+      update: (id, b) => apiFetch(`/products/${id}/reviews/me`, { method: "PATCH", body: b }),
+      remove: (id) => apiFetch(`/products/${id}/reviews/me`, { method: "DELETE" }),
     },
   },
   categories: {
@@ -408,6 +410,12 @@ const api = {
   },
   coupons: {
     validate: (body) => apiFetch("/coupons/validate", { method: "POST", body }),
+  },
+  wishlist: {
+    list: () => apiFetch("/wishlist"),
+    toggle: (productId) => apiFetch(`/wishlist/${productId}`, { method: "POST" }),
+    remove: (productId) => apiFetch(`/wishlist/${productId}`, { method: "DELETE" }),
+    status: (productId) => apiFetch(`/wishlist/${productId}/status`),
   },
   delivery: {
     verificationStatus: ()      => apiFetch("/delivery/verification/status"),
@@ -462,7 +470,7 @@ const INITIAL_STATE = {
     cartOpen: false,
     authModal: null,   // null | 'login' | 'register'
     toast: null,
-    page: "home",      // home | products | product | cart | orders | checkout | orderSuccess | delivery | admin
+    page: "home",      // home | products | product | cart | orders | wishlist | checkout | orderSuccess | delivery | admin
     pageParams: {},
   },
 };
@@ -815,6 +823,7 @@ function Navbar({ state, dispatch, onLogout }) {
           {auth.isAuthenticated ? (
             <div className="shop-desktop-auth" style={{ position: "relative" }}>
               <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                {auth.user?.role === "customer" && <button type="button" onClick={() => navigate("wishlist")} aria-label="Saved items" style={{ background: "var(--navy-card)", border: "1px solid var(--navy-border)", borderRadius: "var(--radius-sm)", padding: "7px 10px", cursor: "pointer", color: "var(--amber)", fontSize: 20, lineHeight: 1 }}>♡</button>}
                 <button style={{
                   background: "var(--navy-card)", border: "1px solid var(--navy-border)",
                   borderRadius: "var(--radius-sm)", padding: "6px 12px", cursor: "pointer",
@@ -849,6 +858,7 @@ function Navbar({ state, dispatch, onLogout }) {
         <button onClick={() => mobileNavigate("products")}>Shop collection</button>
         {auth.isAuthenticated ? <>
           <button onClick={() => { setMobileMenuOpen(false); openAccount(); }}>{auth.user?.role === "admin" ? "Admin dashboard" : auth.user?.role === "delivery" ? "Delivery dashboard" : "My orders"}</button>
+          {auth.user?.role === "customer" && <button onClick={() => mobileNavigate("wishlist")}>Saved items</button>}
           <button onClick={() => { setMobileMenuOpen(false); onLogout(); }}>Log out</button>
         </> : <>
           <button onClick={() => { setMobileMenuOpen(false); dispatch({ type: "AUTH_MODAL", mode: "login" }); }}>Sign in</button>
@@ -863,6 +873,7 @@ function Navbar({ state, dispatch, onLogout }) {
 // AUTH MODAL — Login + Register tabs
 // ─────────────────────────────────────────────────────────────────────────────
 function AuthModal({ state, dispatch }) {
+  const reduxDispatch = useReduxDispatch();
   const { ui } = state;
   const [mode, setMode] = useState(ui.authModal || "login");
   const [loginOtpStep, setLoginOtpStep] = useState(false);
@@ -911,6 +922,8 @@ function AuthModal({ state, dispatch }) {
     }
     const { access_token, user } = res.data;
     setAccessToken(access_token);
+    // Keep the Redux session used by /admin/monitoring in sync with the storefront.
+    reduxDispatch(sessionEstablished({ accessToken: access_token, user }));
     dispatch({ type: "AUTH_LOADED", token: access_token, user });
     dispatch({ type: "TOAST", toast: { type: "success", title: `Welcome back, ${user.name.split(" ")[0]}!`, message: "You are now signed in." } });
     close();
@@ -1192,7 +1205,45 @@ function CartDrawer({ state, dispatch }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // PRODUCT CARD
 // ─────────────────────────────────────────────────────────────────────────────
-function ProductCard({ product, dispatch, onAddToCart }) {
+function WishlistButton({ productId, state, dispatch, compact = false }) {
+  const [saved, setSaved] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    if (!state.auth.isAuthenticated || state.auth.user?.role !== "customer") {
+      setSaved(false);
+      return () => { active = false; };
+    }
+    api.wishlist.status(productId).then(res => {
+      if (active && res.success) setSaved(Boolean(res.data?.in_wishlist));
+    });
+    return () => { active = false; };
+  }, [productId, state.auth.isAuthenticated, state.auth.user?.role]);
+
+  const toggle = async event => {
+    event.stopPropagation();
+    if (!state.auth.isAuthenticated) {
+      dispatch({ type: "AUTH_MODAL", mode: "login" });
+      return;
+    }
+    if (state.auth.user?.role !== "customer" || busy) return;
+    setBusy(true);
+    const res = await api.wishlist.toggle(productId);
+    setBusy(false);
+    if (res.success) {
+      setSaved(res.data?.action === "added" || res.data?.action === "already");
+      dispatch({ type: "TOAST", toast: { type: "success", title: res.data?.action === "removed" ? "Removed from wishlist" : "Saved to wishlist", message: "You can find it in your saved items." } });
+    }
+  };
+
+  return <button type="button" aria-label={saved ? "Remove from wishlist" : "Add to wishlist"} aria-pressed={saved} onClick={toggle} disabled={busy}
+    style={{ width: compact ? 34 : 38, height: compact ? 34 : 38, borderRadius: "50%", border: "1px solid var(--navy-border)", background: saved ? "#dfbd8930" : "var(--navy-card)", color: saved ? "var(--amber)" : "var(--muted)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: compact ? 18 : 20, opacity: busy ? .55 : 1 }}>
+    {saved ? "♥" : "♡"}
+  </button>;
+}
+
+function ProductCard({ product, state, dispatch, onAddToCart }) {
   const [adding, setAdding] = useState(false);
   const [added, setAdded] = useState(false);
 
@@ -1239,6 +1290,7 @@ function ProductCard({ product, dispatch, onAddToCart }) {
             -{product.discount_percent}%
           </div>
         )}
+        <div style={{ position: "absolute", top: 12, right: 12 }}><WishlistButton productId={product.id} state={state} dispatch={dispatch} compact /></div>
         {!product.in_stock && (
           <div style={{
             position: "absolute", inset: 0, background: "rgba(10,15,30,0.7)",
@@ -1451,7 +1503,7 @@ function HomePage({ state, dispatch, onAddToCart }) {
           {loadingHome && [...Array(4)].map((_, i) => <div key={i} className="skeleton" style={{ minHeight: 290, borderRadius: 18 }} />)}
           {products.map((p, i) => (
             <div key={p.id} style={{ animation: `fadeInUp 0.5s ${i * 0.08}s ease both` }}>
-              <ProductCard product={p} dispatch={dispatch} onAddToCart={onAddToCart} />
+              <ProductCard product={p} state={state} dispatch={dispatch} onAddToCart={onAddToCart} />
             </div>
           ))}
         </div> : <div className="shop-card-panel" style={{ borderRadius: 18, padding: "28px 24px", color: "var(--muted)", lineHeight: 1.7 }}>
@@ -1642,7 +1694,7 @@ function ProductsPage({ state, dispatch, onAddToCart }) {
             <div className="shop-product-grid">
               {products.map((p, i) => (
                 <div key={p.id} style={{ animation: `fadeInUp 0.4s ${i * 0.05}s ease both` }}>
-                  <ProductCard product={p} dispatch={dispatch} onAddToCart={onAddToCart} />
+                  <ProductCard product={p} state={state} dispatch={dispatch} onAddToCart={onAddToCart} />
                 </div>
               ))}
             </div>
@@ -1672,6 +1724,62 @@ function ProductsPage({ state, dispatch, onAddToCart }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // PRODUCT DETAIL PAGE
 // ─────────────────────────────────────────────────────────────────────────────
+function ProductReviews({ productId, state, dispatch }) {
+  const [reviews, setReviews] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [rating, setRating] = useState(5);
+  const [body, setBody] = useState("");
+  const [message, setMessage] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    const res = await api.products.reviews.list(productId, { page: 1, limit: 20 });
+    if (res.success) setReviews(res.data || []);
+    else setMessage(res.error?.message || "Could not load reviews.");
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, [productId]);
+
+  const submit = async event => {
+    event.preventDefault();
+    if (!state.auth.isAuthenticated) {
+      dispatch({ type: "AUTH_MODAL", mode: "login" });
+      return;
+    }
+    if (!body.trim()) { setMessage("Write a short review first."); return; }
+    setSaving(true); setMessage("");
+    const res = await api.products.reviews.create(productId, { rating, body: body.trim() });
+    setSaving(false);
+    if (!res.success) { setMessage(res.error?.message || "Could not save your review."); return; }
+    setBody("");
+    setMessage("Your review was added.");
+    load();
+  };
+
+  return <section style={{ marginTop: 56, paddingTop: 34, borderTop: "1px solid var(--navy-border)" }}>
+    <div className="shop-section-heading" style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "end", marginBottom: 20 }}>
+      <div><div className="shop-kicker">CUSTOMER NOTES</div><h2 style={{ fontFamily: "var(--font-serif)", fontSize: 34, marginTop: 7 }}>Reviews</h2></div>
+      <span style={{ color: "var(--muted)", fontSize: 13 }}>{reviews.length} review{reviews.length === 1 ? "" : "s"}</span>
+    </div>
+    {loading ? <Spinner /> : reviews.length === 0 ? <p style={{ color: "var(--muted)", fontSize: 14 }}>Be the first to share your experience.</p> : <div style={{ display: "grid", gap: 12, marginBottom: 24 }}>
+      {reviews.map(review => <article key={review.id} className="shop-card-panel" style={{ padding: 18, borderRadius: "var(--radius-sm)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 8 }}><span style={{ color: "var(--amber)", letterSpacing: 2 }}>{"★".repeat(Math.max(0, Math.min(5, Number(review.rating))))}{"☆".repeat(5 - Math.max(0, Math.min(5, Number(review.rating))))}</span><time style={{ color: "var(--muted2)", fontSize: 11 }}>{review.created_at ? new Date(review.created_at).toLocaleDateString("en-EG") : ""}</time></div>
+        <p style={{ color: "var(--muted)", lineHeight: 1.6, fontSize: 14 }}>{review.body}</p>
+      </article>)}
+    </div>}
+    {state.auth.user?.role === "customer" && <form onSubmit={submit} className="shop-card-panel shop-form-surface" style={{ padding: 20, borderRadius: "var(--radius-sm)" }}>
+      <h3 style={{ fontSize: 16, marginBottom: 12 }}>Share your experience</h3>
+      <div style={{ display: "flex", gap: 6, marginBottom: 12 }} aria-label="Rating">
+        {[1, 2, 3, 4, 5].map(value => <button key={value} type="button" aria-label={`${value} star${value === 1 ? "" : "s"}`} aria-pressed={rating === value} onClick={() => setRating(value)} style={{ border: 0, background: "none", color: value <= rating ? "var(--amber)" : "var(--muted2)", fontSize: 24, cursor: "pointer", padding: 0 }}>★</button>)}
+      </div>
+      <textarea value={body} onChange={event => setBody(event.target.value)} maxLength={1000} rows={3} placeholder="What did you think?" style={{ width: "100%", resize: "vertical", borderRadius: 10, border: "1px solid var(--navy-border)", background: "var(--navy-mid)", color: "var(--white)", padding: 12, fontFamily: "inherit" }} />
+      <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 10 }}><Btn size="sm" type="submit" disabled={saving}>{saving ? "Saving..." : "Post review"}</Btn>{message && <span role="status" style={{ color: message.includes("added") ? "var(--success)" : "var(--muted)", fontSize: 12 }}>{message}</span>}</div>
+    </form>}
+  </section>;
+}
+
 function ProductDetailPage({ state, dispatch, onAddToCart }) {
   const { ui } = state;
   const [product, setProduct] = useState(null);
@@ -1774,6 +1882,7 @@ function ProductDetailPage({ state, dispatch, onAddToCart }) {
               <Badge color="var(--info)">{product.category?.name}</Badge>
               {product.in_stock ? <Badge color="var(--success)">In Stock</Badge> : <Badge color="var(--danger)">Out of Stock</Badge>}
               {product.discount_percent > 0 && <Badge color="var(--danger)">-{product.discount_percent}% OFF</Badge>}
+              <WishlistButton productId={product.id} state={state} dispatch={dispatch} />
             </div>
             <h1 style={{ fontFamily: "var(--font-serif)", fontSize: "clamp(24px,3vw,36px)", lineHeight: 1.2, marginBottom: "12px" }}>{product.name}</h1>
             <StarRating rating={product.ratings?.average || 4.5} count={product.ratings?.count || 0} />
@@ -1851,6 +1960,7 @@ function ProductDetailPage({ state, dispatch, onAddToCart }) {
           )}
         </div>
       </div>
+      <ProductReviews productId={product.id} state={state} dispatch={dispatch} />
     </main>
   );
 }
@@ -2118,6 +2228,31 @@ function OrdersPage({ state, dispatch }) {
       )}
     </main>
   );
+}
+
+function WishlistPage({ state, dispatch, onAddToCart }) {
+  const [products, setProducts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const load = async () => {
+    setLoading(true);
+    const res = await api.wishlist.list();
+    if (res.success) setProducts(res.data || []);
+    else setError(res.error?.message || "Could not load your saved items.");
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, []);
+
+  if (state.auth.user?.role !== "customer") return <HomePage state={state} dispatch={dispatch} onAddToCart={onAddToCart} />;
+  return <main style={{ maxWidth: "1280px", margin: "0 auto", padding: "48px 24px 80px" }}>
+    <div className="shop-kicker">YOUR SHOPLY ACCOUNT</div>
+    <h1 className="shop-section-title" style={{ fontFamily: "var(--font-serif)", fontSize: 50, marginBottom: 12 }}>Saved items</h1>
+    <p style={{ color: "var(--muted)", marginBottom: 30 }}>Products you want to come back to.</p>
+    {error && <p role="alert" style={{ color: "var(--danger)", marginBottom: 18 }}>{error}</p>}
+    {loading ? <div style={{ display: "flex", justifyContent: "center", padding: 60 }}><Spinner size={32} /></div> : products.length === 0 ? <div className="shop-card-panel" style={{ padding: 44, textAlign: "center", borderRadius: "var(--radius)", color: "var(--muted)" }}><div style={{ fontSize: 42, color: "var(--amber)", marginBottom: 10 }}>♡</div><h2 style={{ fontFamily: "var(--font-serif)", color: "var(--white)", fontSize: 28, marginBottom: 8 }}>Nothing saved yet</h2><p style={{ marginBottom: 22 }}>Tap the heart on a product to keep it here.</p><Btn onClick={() => dispatch({ type: "NAVIGATE", page: "products" })}>Browse collection</Btn></div> : <div className="shop-product-grid">{products.map(product => <ProductCard key={product.id} product={product} state={state} dispatch={dispatch} onAddToCart={onAddToCart} />)}</div>}
+  </main>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2691,6 +2826,7 @@ export default function Storefront() {
         if (state.ui.page === "checkout") return <CheckoutPage {...pageProps} />;
         return <OrdersPage {...pageProps} />;
       case "orderSuccess": return <OrderSuccessPage {...pageProps} />;
+      case "wishlist":     return state.auth.isAuthenticated ? <WishlistPage {...pageProps} /> : <HomePage {...pageProps} />;
       case "verifyAccount": return <VerifyAccountPage dispatch={dispatch} token={state.ui.pageParams.token} />;
       case "resetPassword": return <ResetPasswordPage dispatch={dispatch} token={state.ui.pageParams.token} />;
       case "delivery":     { window.location.href = "/delivery/dashboard"; return null; }

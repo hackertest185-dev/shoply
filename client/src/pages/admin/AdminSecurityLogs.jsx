@@ -74,6 +74,7 @@ function HealthDot({ label, status }) {
 function DashboardTab() {
   const [kpis,   setKpis]   = useState(null);
   const [health, setHealth] = useState(null);
+  const [loadError, setLoadError] = useState("");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -81,8 +82,9 @@ function DashboardTab() {
       api.admin.dashboard().then(r => setKpis(r.data.data)),
       api.admin.health().then(r => setHealth(r.data.data)),
     ]).catch(() => {
-      setKpis({ revenue_today: 12847.50, orders_today: 143, new_users: 28, pending_reviews: 7, error_rate: 0.12, p95_latency: 187 });
-      setHealth({ mongodb: 'connected', redis: 'connected', status: 'healthy' });
+      setKpis(null);
+      setHealth(null);
+      setLoadError("Monitoring data is temporarily unavailable. Please refresh shortly.");
     }).finally(() => setLoading(false));
   }, []);
 
@@ -90,6 +92,7 @@ function DashboardTab() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+      {loadError && <Card style={{ borderColor: '#ef4444' }}><div role="alert" style={{ color: '#ff8f83', fontSize: '13px' }}>{loadError}</div></Card>}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '16px' }}>
         <KPICard label="Revenue Today"    value={`${(kpis?.revenue_today || 0).toLocaleString()} EGP`}  icon="💰" color="#10b981" />
         <KPICard label="Orders Today"     value={kpis?.orders_today    || 0}  icon="📦" color="#3b82f6" />
@@ -373,6 +376,7 @@ function AuditLogsTab() {
   const [action,  setAction]  = useState('all');
   const [actorId, setActorId] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const [expanded, setExpanded] = useState(null);
 
   const load = useCallback(() => {
@@ -382,16 +386,11 @@ function AuditLogsTab() {
     if (actorId.trim())   params.actor_id = actorId.trim();
 
     api.admin.auditLogs(params)
-      .then(r => { setLogs(r.data.data); setTotal(r.data.meta?.total || 0); })
+      .then(r => { setLogs(r.data.data); setTotal(r.data.meta?.total || 0); setLoadError(""); })
       .catch(() => {
-        // Demo fallback
-        setLogs([
-          { id: '1', actor_id: 'admin1', actor_role: 'admin', action: 'agent_approved',   target_entity: 'users',  target_id: 'u1',  created_at: new Date().toISOString(), metadata: {} },
-          { id: '2', actor_id: 'agent1', actor_role: 'delivery', action: 'delivery_confirmed', target_entity: 'orders', target_id: 'o1', created_at: new Date(Date.now()-60000).toISOString(), metadata: { proof_url: 's3://...' } },
-          { id: '3', actor_id: 'user1',  actor_role: 'customer', action: 'login_failure',  target_entity: 'users',  target_id: 'u2',  created_at: new Date(Date.now()-120000).toISOString(), metadata: { ip: '1.2.3.4' } },
-          { id: '4', actor_id: 'admin1', actor_role: 'admin', action: 'product_approved', target_entity: 'products', target_id: 'p1', created_at: new Date(Date.now()-180000).toISOString(), metadata: {} },
-        ]);
-        setTotal(4);
+        setLogs([]);
+        setTotal(0);
+        setLoadError("Audit logs are temporarily unavailable. Please refresh shortly.");
       })
       .finally(() => setLoading(false));
   }, [page, action, actorId]);
@@ -400,6 +399,7 @@ function AuditLogsTab() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      {loadError && <Card style={{ borderColor: '#ef4444' }}><div role="alert" style={{ color: '#ff8f83', fontSize: '13px' }}>{loadError}</div></Card>}
       {/* Filters */}
       <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
         <select value={action} onChange={e => { setAction(e.target.value); setPage(1); }} style={{
