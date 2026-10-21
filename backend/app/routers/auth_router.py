@@ -28,7 +28,7 @@ from app.schemas.auth_schema import (
 from app.models import user_model
 from app.services import auth_service
 from app.services.audit_log_service import write_audit_log
-from app.services.email_service import email_is_configured, send_order_email
+from app.services.email_service import email_is_configured, send_password_reset_email
 
 router  = APIRouter(prefix="/auth", tags=["Authentication"])
 limiter = Limiter(key_func=get_remote_address)
@@ -286,7 +286,7 @@ async def forgot_password(
         await store_password_reset_token(token, str(user["_id"]), int(user.get("auth_version", 1)))
         link = f"{settings.FRONTEND_URL.rstrip('/')}/#reset_token={token}"
         try:
-            await send_order_email(str(body.email), "Reset your Shoply password", f"Use this link within 30 minutes to reset your password:\n{link}")
+            await send_password_reset_email(str(body.email), link)
         except Exception:
             pass
     return _success({"message": "If that email exists, a reset link has been sent."})

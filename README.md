@@ -41,6 +41,23 @@ The repository contains deployment scaffolding for a zero-cost pilot:
 
 The free backend sleeps after inactivity. Redis only stores temporary OTP and rate-limit data; MongoDB Atlas holds orders and products. MongoDB Atlas Free is limited in storage and throughput, so this setup is intended for a public pilot rather than a high-availability production service. Never commit `.env`, `env`, JWT keys, database passwords, or provider tokens.
 
+## Transactional email
+
+Account verification, sign-in codes, password recovery, order updates and chat notifications
+use a shared mobile-friendly Shoply email layout, with a plain-text alternative.
+Set `EMAIL_FROM_NAME=Shoply` for the sender display name. Personal Gmail SMTP always
+uses the authenticated `SMTP_USER` mailbox as its actual sender address; an unverified
+brand address must not impersonate a domain. Other SMTP providers require a verified
+`EMAIL_FROM` address. Email action buttons only link to `FRONTEND_URL`, which must be
+the public HTTPS storefront URL in production.
+
+Delivery to the inbox is not guaranteed by an HTML template. For a branded domain,
+verify that domain with the email provider and publish its SPF, DKIM and DMARC records.
+Do not invent these DNS values or use a domain the store does not control. Check
+received-message headers (Authentication-Results, mailed-by and signed-by) before
+diagnosing spam filtering. Gmail's requirements are documented in the
+[Google sender guidelines](https://support.google.com/mail/answer/81126).
+
 ## Main directories
 
 - `backend/app/routers`: HTTP endpoints and role checks

@@ -74,12 +74,12 @@ async def auth_setup(monkeypatch):
     async def capture_otp(email, code):
         sent["otp"].append((email, code))
 
-    async def capture_reset(email, subject, body):
-        sent["reset"].append((email, body))
+    async def capture_reset(email, link):
+        sent["reset"].append((email, link))
 
     monkeypatch.setattr(auth_service, "send_verification_email", capture_verification)
     monkeypatch.setattr(auth_service, "send_email_otp", capture_otp)
-    monkeypatch.setattr(auth_router, "send_order_email", capture_reset)
+    monkeypatch.setattr(auth_router, "send_password_reset_email", capture_reset)
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             yield client, db, sent

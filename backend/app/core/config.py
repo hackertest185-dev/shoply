@@ -67,9 +67,9 @@ class Settings(BaseSettings):
     S3_BUCKET_DELIVERY_DOCS: str = "shoply-delivery-docs"
     S3_BUCKET_PROOF: str = "shoply-proof-of-delivery"
 
-    # ── Email (SendGrid) ──────────────────────────────────────────────────────
+    # ── Transactional email ───────────────────────────────────────────────────
     SENDGRID_API_KEY: str = ""
-    EMAIL_FROM: str = "noreply@shoply.com"
+    EMAIL_FROM: str = ""
     EMAIL_FROM_NAME: str = "Shoply"
     FRONTEND_URL: str = "https://shoply-adh.pages.dev"
 
