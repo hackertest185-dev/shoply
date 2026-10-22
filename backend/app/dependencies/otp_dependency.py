@@ -43,7 +43,10 @@ async def validate_otp(
     if str(order.get("delivery_id", "")) != current_user["user_id"]:
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Order not found."})
 
-    if order.get("delivery_status") not in ("assigned", "otp_verified", "out_for_delivery"):
+    # Accept the customer code only after the assigned courier has explicitly
+    # started the delivery. This avoids consuming a valid OTP for an order that
+    # is not yet in its delivery stage.
+    if order.get("status") != "out_for_delivery" or order.get("delivery_status") != "assigned":
         raise HTTPException(
             status_code=409,
             detail={"code": "CONFLICT", "message": "Order is not in a deliverable state."},

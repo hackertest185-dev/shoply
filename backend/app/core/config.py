@@ -4,6 +4,7 @@ Reads all environment variables via Pydantic BaseSettings.
 Never import secrets directly — always use settings.SECRET_NAME.
 """
 from functools import lru_cache
+from urllib.parse import urlparse
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -50,7 +51,7 @@ class Settings(BaseSettings):
     ADMIN_ACCESS_TOKEN_EXPIRE_MINUTES: int = 10
     ADMIN_REFRESH_TOKEN_EXPIRE_DAYS: int = 1
     PASSWORD_MIN_LENGTH: int = 12
-    MAX_REQUEST_BODY_BYTES: int = 12 * 1024 * 1024
+    MAX_REQUEST_BODY_BYTES: int = 16 * 1024 * 1024
     PRODUCT_IMAGE_MAX_BYTES: int = 6 * 1024 * 1024
     DELIVERY_DOCUMENT_MAX_BYTES: int = 10 * 1024 * 1024
     DELIVERY_PROOF_MAX_BYTES: int = 15 * 1024 * 1024
@@ -117,9 +118,45 @@ class Settings(BaseSettings):
         if (
             not self.ALLOWED_ORIGINS
             or any(origin.strip() == "*" for origin in self.ALLOWED_ORIGINS)
-            or any(not origin.strip().startswith("https://") for origin in self.ALLOWED_ORIGINS)
+            or any(
+                (parsed := urlparse(origin.strip())).scheme != "https"
+                or not parsed.hostname
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.path not in {"", "/"}
+                or parsed.query
+                or parsed.fragment
+                for origin in self.ALLOWED_ORIGINS
+            )
         ):
             raise RuntimeError("ALLOWED_ORIGINS must contain explicit HTTPS origins.")
+        if self.JWT_ALGORITHM not in {"RS256", "HS256"}:
+            raise RuntimeError("JWT_ALGORITHM must be RS256 or HS256.")
+        if self.JWT_ALGORITHM == "HS256":
+            # HS256 needs one high-entropy shared secret for signing and
+            # verification. Distinct 'private/public' values cannot work and
+            # short secrets are vulnerable to offline guessing.
+            if self.JWT_PRIVATE_KEY != self.JWT_PUBLIC_KEY:
+                raise RuntimeError("HS256 requires matching JWT_PRIVATE_KEY and JWT_PUBLIC_KEY values.")
+            if len(self.JWT_PRIVATE_KEY.encode("utf-8")) < 32:
+                raise RuntimeError("HS256 requires a random secret of at least 32 bytes.")
+        else:
+            try:
+                from cryptography.hazmat.primitives import serialization
+                private_key = serialization.load_pem_private_key(
+                    self.JWT_PRIVATE_KEY.encode("utf-8"), password=None
+                )
+                public_key = serialization.load_pem_public_key(
+                    self.JWT_PUBLIC_KEY.encode("utf-8")
+                )
+                if (
+                    private_key.key_size < 2048
+                    or public_key.key_size < 2048
+                    or private_key.public_key().public_numbers() != public_key.public_numbers()
+                ):
+                    raise ValueError("Invalid RSA key pair")
+            except Exception as exc:
+                raise RuntimeError("RS256 requires a matching RSA key pair of at least 2048 bits.") from exc
         if self.ADMIN_MFA_REQUIRED and self.ADMIN_MFA_TTL_SECONDS > 900:
             raise RuntimeError("ADMIN_MFA_TTL_SECONDS must be 15 minutes or less.")
         if self.ADMIN_MFA_MAX_ATTEMPTS < 1 or self.ADMIN_MFA_MAX_ATTEMPTS > 10:

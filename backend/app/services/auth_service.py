@@ -323,18 +323,28 @@ async def refresh_tokens(db, refresh_token_plain: str, ip: str = "unknown") -> d
     stored = await db.refresh_tokens.find_one({"token_hash": {"$eq": token_hash}})
 
     if not stored:
-        await db.refresh_tokens.update_many(
-            {"token_family": {"$eq": token_family}},
-            {"$set": {"is_revoked": True}},
-        )
+        if isinstance(token_family, str) and token_family:
+            await db.refresh_tokens.update_many(
+                {"token_family": {"$eq": token_family}},
+                {"$set": {"is_revoked": True}},
+            )
         raise ValueError("TOKEN_INVALID")
     if stored.get("is_revoked"):
+        # Reuse of a consumed token revokes every descendant in the family.
+        stored_family = stored.get("token_family")
+        if isinstance(stored_family, str) and stored_family:
+            await db.refresh_tokens.update_many(
+                {"token_family": {"$eq": stored_family}},
+                {"$set": {"is_revoked": True}},
+            )
         raise ValueError("TOKEN_INVALID")
-
-    await db.refresh_tokens.update_one(
-        {"token_hash": {"$eq": token_hash}},
-        {"$set": {"is_revoked": True}},
-    )
+    if (
+        stored.get("user_id") != user_id
+        or stored.get("token_family") != token_family
+        or not isinstance(user_id, str)
+        or not isinstance(token_family, str)
+    ):
+        raise ValueError("TOKEN_INVALID")
 
     user = await db.users.find_one({"_id": ObjectId(user_id)})
     if (
@@ -347,6 +357,22 @@ async def refresh_tokens(db, refresh_token_plain: str, ip: str = "unknown") -> d
 
     amr = tuple(stored.get("amr") or ("password",))
     if "email_otp" not in amr or "password" not in amr:
+        raise ValueError("TOKEN_INVALID")
+
+    # Consume the token atomically. Parallel refreshes must not both mint a
+    # fresh session from the same bearer cookie.
+    consumed = await db.refresh_tokens.find_one_and_update(
+        {"token_hash": {"$eq": token_hash}, "is_revoked": False},
+        {"$set": {"is_revoked": True}},
+        return_document=ReturnDocument.BEFORE,
+    )
+    if not consumed:
+        stored_family = stored.get("token_family")
+        if isinstance(stored_family, str) and stored_family:
+            await db.refresh_tokens.update_many(
+                {"token_family": {"$eq": stored_family}},
+                {"$set": {"is_revoked": True}},
+            )
         raise ValueError("TOKEN_INVALID")
 
     session = await _issue_session(db, user, ip, "token_refresh", amr)

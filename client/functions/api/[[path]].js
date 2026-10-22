@@ -24,7 +24,7 @@ export async function onRequest(context) {
     if (value) headers.set(name, value);
   }
   const contentLength = Number(context.request.headers.get("content-length") || 0);
-  if (contentLength > 12 * 1024 * 1024) {
+  if (contentLength > 16 * 1024 * 1024) {
     return new Response("Request too large", { status: 413 });
   }
 

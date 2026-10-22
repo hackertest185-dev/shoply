@@ -4,7 +4,10 @@ Delivery agent verification + fulfillment routes.
 Dependency chain: auth → rbac(delivery) → verified (for fulfillment) → otp (for verify-otp).
 """
 import uuid
+from bson import ObjectId
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from datetime import datetime, timezone
+from pymongo import ReturnDocument
 
 from app.core.database import get_db
 from app.core.config import settings
@@ -128,9 +131,22 @@ async def start_delivery(
             detail={"code": "CONFLICT", "message": "Order is not in assigned state."},
         )
 
-    await order_model.update_order_status(
-        db, order_id, status="out_for_delivery", delivery_status="assigned"
+    now = datetime.now(timezone.utc)
+    transitioned = await db.orders.find_one_and_update(
+        {
+            "_id": ObjectId(order_id),
+            "delivery_id": ObjectId(current_user["user_id"]),
+            "delivery_status": "assigned",
+            "status": {"$in": ["confirmed", "out_for_delivery"]},
+        },
+        {
+            "$set": {"status": "out_for_delivery", "updated_at": now},
+            "$push": {"status_history": {"status": "out_for_delivery", "at": now, "by": ObjectId(current_user["user_id"])}},
+        },
+        return_document=ReturnDocument.AFTER,
     )
+    if not transitioned:
+        raise HTTPException(status_code=409, detail={"code": "CONFLICT", "message": "Order state changed. Refresh and try again."})
     return _ok({
         "order_id":        order_id,
         "status":          "out_for_delivery",
@@ -151,9 +167,22 @@ async def verify_otp_endpoint(
     Validate OTP. otp_dependency has already verified it by this point.
     Advance deliveryStatus to otp_verified.
     """
-    await order_model.update_order_status(
-        db, order_id, status="out_for_delivery", delivery_status="otp_verified"
+    now = datetime.now(timezone.utc)
+    transitioned = await db.orders.find_one_and_update(
+        {
+            "_id": ObjectId(order_id),
+            "delivery_id": ObjectId(context["user_id"]),
+            "status": "out_for_delivery",
+            "delivery_status": {"$in": ["assigned", "otp_verified"]},
+        },
+        {
+            "$set": {"delivery_status": "otp_verified", "updated_at": now},
+            "$push": {"status_history": {"status": "otp_verified", "at": now, "by": ObjectId(context["user_id"])}},
+        },
+        return_document=ReturnDocument.AFTER,
     )
+    if not transitioned:
+        raise HTTPException(status_code=409, detail={"code": "CONFLICT", "message": "Order state changed. Refresh and try again."})
     return _ok({
         "order_id":        order_id,
         "delivery_status": "otp_verified",
@@ -188,6 +217,8 @@ async def upload_proof(
             db, order_id, current_user["user_id"],
             content, proof_photo.filename or "proof.jpg", ip,
         )
-    except ValueError:
+    except ValueError as exc:
+        if str(exc) == "ORDER_STATE_CHANGED":
+            raise HTTPException(status_code=409, detail={"code": "CONFLICT", "message": "Order state changed. Refresh and try again."})
         raise HTTPException(status_code=415, detail={"code": "UNSUPPORTED_FILE", "message": "Only valid JPEG and PNG images are allowed."})
     return _ok(result)

@@ -41,6 +41,57 @@ logger = logging.getLogger("shoply")
 _REQUEST_ID = re.compile(r"^[A-Za-z0-9._:-]{1,100}$")
 
 
+class RequestBodyLimitMiddleware:
+    """Enforce the configured body limit even when Content-Length is absent."""
+
+    def __init__(self, app, max_bytes: int):
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        headers = {key.lower(): value for key, value in scope.get("headers", [])}
+        raw_length = headers.get(b"content-length")
+        if raw_length:
+            try:
+                if int(raw_length) > self.max_bytes:
+                    response = JSONResponse(
+                        status_code=413,
+                        content={"success": False, "error": {"code": "REQUEST_TOO_LARGE", "message": "Request body is too large."}},
+                    )
+                    await response(scope, receive, send)
+                    return
+            except ValueError:
+                response = JSONResponse(status_code=400, content={"success": False, "error": {"code": "INVALID_CONTENT_LENGTH", "message": "Invalid request."}})
+                await response(scope, receive, send)
+                return
+
+        consumed = 0
+
+        async def limited_receive():
+            nonlocal consumed
+            message = await receive()
+            if message.get("type") == "http.request":
+                consumed += len(message.get("body", b""))
+                if consumed > self.max_bytes:
+                    raise ValueError("REQUEST_BODY_LIMIT_EXCEEDED")
+            return message
+
+        try:
+            await self.app(scope, limited_receive, send)
+        except ValueError as exc:
+            if str(exc) != "REQUEST_BODY_LIMIT_EXCEEDED":
+                raise
+            response = JSONResponse(
+                status_code=413,
+                content={"success": False, "error": {"code": "REQUEST_TOO_LARGE", "message": "Request body is too large."}},
+            )
+            await response(scope, receive, send)
+
+
 # ── Lifespan (startup + shutdown) ─────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -66,6 +117,7 @@ app = FastAPI(
     openapi_url="/openapi.json" if settings.DEBUG else None,
     lifespan=lifespan,
 )
+app.add_middleware(RequestBodyLimitMiddleware, max_bytes=settings.MAX_REQUEST_BODY_BYTES)
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -97,17 +149,15 @@ async def add_security_headers(request: Request, call_next):
         if referer:
             parsed_referer = urlparse(referer)
             referer_origin = f"{parsed_referer.scheme}://{parsed_referer.netloc}"
-        if origin not in trusted and referer_origin not in trusted:
+        # An explicitly supplied Origin is authoritative. Never let a trusted
+        # Referer override a hostile Origin; only use Referer for clients that
+        # omit Origin entirely.
+        source_origin = origin if origin is not None else referer_origin
+        if source_origin not in trusted:
             return JSONResponse(
                 status_code=403,
                 content={"success": False, "error": {"code": "CSRF_BLOCKED", "message": "Request origin is not trusted."}},
             )
-    content_length = request.headers.get("content-length")
-    if content_length and content_length.isdigit() and int(content_length) > settings.MAX_REQUEST_BODY_BYTES:
-        return JSONResponse(
-            status_code=413,
-            content={"success": False, "error": {"code": "REQUEST_TOO_LARGE", "message": "Request body is too large."}},
-        )
     candidate_request_id = request.headers.get("X-Request-ID", "")
     request_id = candidate_request_id if _REQUEST_ID.fullmatch(candidate_request_id) else str(uuid.uuid4())
     context_token = request_id_context.set(request_id)
@@ -148,7 +198,8 @@ async def request_validation_handler(request: Request, exc: RequestValidationErr
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
-    logger.error("Unhandled exception [%s]: %s", request_id, exc, exc_info=True)
+    # Avoid copying user-controlled exception messages into centralized logs.
+    logger.error("Unhandled exception [%s], type=%s", request_id, type(exc).__name__)
     return JSONResponse(
         status_code=500,
         content={

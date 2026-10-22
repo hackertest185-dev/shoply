@@ -149,16 +149,29 @@ async def confirm_delivery(
     """
     proof_url = await upload_proof_of_delivery(order_id, agent_id, proof_content, proof_filename)
 
-    from app.models.order_model import update_order_status
-    await update_order_status(
-        db, order_id,
-        status="delivered",
-        delivery_status="delivered",
-        extra={
-            "proof_of_delivery_key": proof_url,
-            "delivered_at": datetime.now(timezone.utc),
+    now = datetime.now(timezone.utc)
+    result = await db.orders.update_one(
+        {
+            "_id": ObjectId(order_id),
+            "delivery_id": ObjectId(agent_id),
+            "status": "out_for_delivery",
+            "delivery_status": "otp_verified",
+        },
+        {
+            "$set": {
+                "status": "delivered",
+                "delivery_status": "delivered",
+                "proof_of_delivery_key": proof_url,
+                "delivered_at": now,
+                "updated_at": now,
+            },
+            "$push": {"status_history": {"status": "delivered", "at": now, "by": ObjectId(agent_id)}},
         },
     )
+    if result.modified_count != 1:
+        # The order may have been reassigned or advanced after the initial
+        # authorization check. Do not let a stale agent complete it.
+        raise ValueError("ORDER_STATE_CHANGED")
 
     await write_audit_log(
         db, agent_id, "delivery", "delivery_confirmed", "orders", order_id,
