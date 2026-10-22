@@ -5,6 +5,7 @@ Rate limits applied via slowapi decorators on each route.
 """
 import uuid
 import secrets
+from datetime import datetime, timezone
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from bson import ObjectId
 from slowapi import Limiter
@@ -247,6 +248,7 @@ async def me(
 @router.post("/change-password")
 async def change_password(
     body: ChangePasswordRequest,
+    response: Response,
     current_user: dict = Depends(require_customer),
     db=Depends(get_db),
 ):
@@ -261,10 +263,28 @@ async def change_password(
         )
 
     new_hash = hash_password(body.new_password)
-    await user_model.update_user(db, current_user["user_id"], {"password_hash": new_hash}, allow_sensitive=True)
-    await user_model.bump_auth_version(db, current_user["user_id"])
+    changed_user = await db.users.find_one_and_update(
+        {
+            "_id": ObjectId(current_user["user_id"]),
+            "role": "customer",
+            "is_verified": True,
+            "status": {"$in": ["active", None]},
+            "auth_version": current_user["auth_version"],
+            "password_hash": user["password_hash"],
+        },
+        {
+            "$set": {"password_hash": new_hash, "updated_at": datetime.now(timezone.utc)},
+            "$inc": {"auth_version": 1},
+        },
+    )
+    if not changed_user:
+        raise HTTPException(
+            status_code=401,
+            detail=_error("INVALID_CREDENTIALS", "Please sign in again before changing your password."),
+        )
     await auth_service.revoke_all_sessions(db, current_user["user_id"])
     await user_model.reset_failed_logins(db, current_user["user_id"])
+    _clear_refresh_cookie(response)
     await write_audit_log(
         db, current_user["user_id"], current_user["role"], "password_changed",
         "users", current_user["user_id"], {}, "local",
@@ -280,7 +300,9 @@ async def forgot_password(
     db=Depends(get_db),
 ):
     # Always return 200 regardless of whether email exists — prevents enumeration.
-    user = await user_model.find_by_email(db, str(body.email).lower().strip())
+    email = str(body.email).lower().strip()
+    under_email_limit = await consume_rate_limit("forgot-password-email", email, 3, 60 * 60)
+    user = await user_model.find_by_email(db, email) if under_email_limit else None
     if user and user.get("role") == "customer" and user.get("is_verified") is True and email_is_configured():
         token = secrets.token_urlsafe(36)
         await store_password_reset_token(token, str(user["_id"]), int(user.get("auth_version", 1)))

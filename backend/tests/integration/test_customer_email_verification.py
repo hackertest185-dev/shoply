@@ -4,6 +4,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 import pytest_asyncio
+from bson import ObjectId
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from httpx import ASGITransport, AsyncClient
@@ -278,6 +279,11 @@ async def test_reset_link_cannot_be_swapped_to_another_account(auth_setup):
         token = token_from_link(link, "verify_token")
         assert (await client.post("/api/v1/auth/verify", json={"token": token})).status_code == 200
 
+    user_a_before_reset = await db.users.find_one({"email": a})
+    old_access_token = create_access_token({
+        "user_id": str(user_a_before_reset["_id"]), "email": a, "role": "customer",
+        "auth_version": user_a_before_reset["auth_version"], "amr": ["password", "email_otp"],
+    })
     original_b = (await db.users.find_one({"email": b}))["password_hash"]
     assert (await client.post("/api/v1/auth/forgot-password", json={"email": a})).status_code == 200
     reset_token = token_from_link(sent["reset"][-1][1].splitlines()[-1], "reset_token")
@@ -291,6 +297,8 @@ async def test_reset_link_cannot_be_swapped_to_another_account(auth_setup):
     assert completed.status_code == 200
     assert verify_password("DifferentPassword123!", (await db.users.find_one({"email": a}))["password_hash"])
     assert (await db.users.find_one({"email": b}))["password_hash"] == original_b
+    invalidated = await client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {old_access_token}"})
+    assert invalidated.status_code == 401
     replay = await client.post("/api/v1/auth/reset-password", json={
         "token": reset_token, "new_password": "AnotherPassword123!",
     })
@@ -303,6 +311,34 @@ async def test_reset_link_cannot_be_swapped_to_another_account(auth_setup):
     assert (await client.post("/api/v1/auth/reset-password", json={
         "token": stale, "new_password": "AnotherPassword123!",
     })).status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_change_password_atomically_invalidates_existing_access_token(auth_setup):
+    client, db, _ = auth_setup
+    email = "change-password@example.com"
+    user_id = (await auth_service.register_user(
+        db, "Test Buyer", email, "SecurePassword123!", "customer",
+    ))["user_id"]
+    await db.users.update_one({"_id": ObjectId(user_id)}, {"$set": {"is_verified": True}})
+    user = await db.users.find_one({"email": email})
+    access_token = create_access_token({
+        "user_id": user_id, "email": email, "role": "customer",
+        "auth_version": user["auth_version"], "amr": ["password", "email_otp"],
+    })
+
+    changed = await client.post("/api/v1/auth/change-password", json={
+        "current_password": "SecurePassword123!",
+        "new_password": "DifferentPassword123!",
+    }, headers={"Authorization": f"Bearer {access_token}"})
+
+    assert changed.status_code == 200
+    assert 'refresh_token="";' in changed.headers.get("set-cookie", "")
+    updated = await db.users.find_one({"email": email})
+    assert updated["auth_version"] == user["auth_version"] + 1
+    assert verify_password("DifferentPassword123!", updated["password_hash"])
+    stale_session = await client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {access_token}"})
+    assert stale_session.status_code == 401
 
 
 @pytest.mark.asyncio
