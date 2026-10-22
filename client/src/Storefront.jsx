@@ -2704,10 +2704,11 @@ export default function Storefront() {
   const reduxDispatch = useReduxDispatch();
 
   useEffect(() => {
-    const resetParams = new URLSearchParams(window.location.search);
     const resetHash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
-    const verifyToken = resetHash.get("verify_token") || resetParams.get("verify_token");
-    const resetToken = resetHash.get("reset_token") || resetParams.get("reset_token");
+    // Recovery tokens are accepted only in the URL fragment, which browsers
+    // never send to the server in requests or Referer headers.
+    const verifyToken = resetHash.get("verify_token");
+    const resetToken = resetHash.get("reset_token");
     if (verifyToken || resetToken) {
       window.history.replaceState({}, "", window.location.pathname);
       dispatch({ type: "NAVIGATE", page: verifyToken ? "verifyAccount" : "resetPassword", params: { token: verifyToken || resetToken } });
