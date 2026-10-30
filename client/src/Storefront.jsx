@@ -1419,25 +1419,22 @@ function HomePage({ state, dispatch, onAddToCart }) {
   useEffect(() => {
     const load = async () => {
       setLoadingHome(true);
-      try {
-        const [prodRes, catRes] = await Promise.all([
-          api.products.list({ limit: 24, sort: "-created_at" }),
-          api.categories.list(),
-        ]);
-        if (prodRes.success) {
-          const available = prodRes.data || [];
-          const seenCategories = new Set();
-          const varied = available.filter(product => {
-            if (seenCategories.has(product.category_id)) return false;
-            seenCategories.add(product.category_id);
-            return true;
-          });
-          setProducts([...varied, ...available.filter(product => !varied.includes(product))].slice(0, 4));
-        }
-        if (catRes.success) setCategories(catRes.data || []);
-      } finally {
-        setLoadingHome(false);
+      const [prodRes, catRes] = await Promise.all([
+        api.products.list({ limit: 24, sort: "-created_at" }),
+        api.categories.list(),
+      ]);
+      if (prodRes.success) {
+        const available = prodRes.data || [];
+        const seenCategories = new Set();
+        const varied = available.filter(product => {
+          if (seenCategories.has(product.category_id)) return false;
+          seenCategories.add(product.category_id);
+          return true;
+        });
+        setProducts([...varied, ...available.filter(product => !varied.includes(product))].slice(0, 4));
       }
+      if (catRes.success)  setCategories(catRes.data || []);
+      setLoadingHome(false);
     };
     load();
   }, [state.auth.isAuthenticated]);
@@ -1512,7 +1509,7 @@ function HomePage({ state, dispatch, onAddToCart }) {
       </section>
 
       {/* Featured Products */}
-      <section className="shop-home-featured">
+      <section data-reveal>
         <div className="shop-section-heading" style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "24px" }}>
           <div><div className="shop-kicker">FRESHLY SELECTED</div><h2 className="shop-section-title" style={{ fontFamily: "var(--font-serif)", fontSize: "42px" }}>The latest finds.</h2></div>
           <button onClick={() => dispatch({ type: "NAVIGATE", page: "products" })} style={{ background: "none", border: "none", color: "var(--amber)", cursor: "pointer", fontSize: "14px", fontWeight: 600, fontFamily: "var(--font-sans)" }}>
