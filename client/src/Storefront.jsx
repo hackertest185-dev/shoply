@@ -1263,6 +1263,10 @@ function ProductCard({ product, state, dispatch, onAddToCart }) {
   const handleAdd = async (e) => {
     e.stopPropagation();
     if (!product.in_stock) return;
+    if (!state.auth.isAuthenticated) {
+      dispatch({ type: "AUTH_MODAL", mode: "login" });
+      return;
+    }
     setAdding(true);
     await onAddToCart(product.id, null, 1);
     setAdding(false);
@@ -1416,7 +1420,7 @@ function HomePage({ state, dispatch, onAddToCart }) {
     const load = async () => {
       setLoadingHome(true);
       const [prodRes, catRes] = await Promise.all([
-        state.auth.isAuthenticated ? api.products.list({ limit: 24, sort: "-created_at" }) : Promise.resolve({ success: true, data: [] }),
+        api.products.list({ limit: 24, sort: "-created_at" }),
         api.categories.list(),
       ]);
       if (prodRes.success) {
@@ -1508,21 +1512,18 @@ function HomePage({ state, dispatch, onAddToCart }) {
       <section data-reveal>
         <div className="shop-section-heading" style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "24px" }}>
           <div><div className="shop-kicker">FRESHLY SELECTED</div><h2 className="shop-section-title" style={{ fontFamily: "var(--font-serif)", fontSize: "42px" }}>The latest finds.</h2></div>
-          <button onClick={() => state.auth.isAuthenticated ? dispatch({ type: "NAVIGATE", page: "products" }) : dispatch({ type: "AUTH_MODAL", mode: "login" })} style={{ background: "none", border: "none", color: "var(--amber)", cursor: "pointer", fontSize: "14px", fontWeight: 600, fontFamily: "var(--font-sans)" }}>
+          <button onClick={() => dispatch({ type: "NAVIGATE", page: "products" })} style={{ background: "none", border: "none", color: "var(--amber)", cursor: "pointer", fontSize: "14px", fontWeight: 600, fontFamily: "var(--font-sans)" }}>
             See all →
           </button>
         </div>
-        {state.auth.isAuthenticated ? <div className="shop-product-grid">
+        <div className="shop-product-grid">
           {loadingHome && [...Array(4)].map((_, i) => <div key={i} className="skeleton" style={{ minHeight: 290, borderRadius: 18 }} />)}
           {products.map((p, i) => (
             <div key={p.id} style={{ animation: `fadeInUp 0.5s ${i * 0.08}s ease both` }}>
               <ProductCard product={p} state={state} dispatch={dispatch} onAddToCart={onAddToCart} />
             </div>
           ))}
-        </div> : <div className="shop-card-panel" style={{ borderRadius: 18, padding: "28px 24px", color: "var(--muted)", lineHeight: 1.7 }}>
-          Sign in to discover the latest products selected by Shoply.
-          <div style={{ marginTop: 18 }}><Btn onClick={() => dispatch({ type: "AUTH_MODAL", mode: "login" })}>Sign in to explore ↗</Btn></div>
-        </div>}
+        </div>
       </section>
 
       {/* Trust strip */}
@@ -1820,6 +1821,10 @@ function ProductDetailPage({ state, dispatch, onAddToCart }) {
   }, [ui.pageParams?.id]);
 
   const handleAdd = async () => {
+    if (!state.auth.isAuthenticated) {
+      dispatch({ type: "AUTH_MODAL", mode: "login" });
+      return;
+    }
     setAdding(true);
     await onAddToCart(product.id, selectedVariant?.id, qty);
     setAdding(false);
@@ -2953,8 +2958,8 @@ export default function Storefront() {
     switch (state.ui.page) {
       case "home":         return <HomePage {...pageProps} />;
       case "admin":        return state.auth.user?.role === "admin" ? <AdminDashboard {...pageProps} /> : <HomePage {...pageProps} />;
-      case "products":
-      case "product":
+      case "products": return <ProductsPage {...pageProps} />;
+      case "product":  return <ProductDetailPage {...pageProps} />;
       case "checkout":
       case "orders":
         if (!state.auth.isAuthenticated) return (
@@ -2964,8 +2969,6 @@ export default function Storefront() {
             <Btn onClick={() => dispatch({ type: "AUTH_MODAL", mode: "login" })}>Sign In</Btn>
           </main>
         );
-        if (state.ui.page === "products") return <ProductsPage {...pageProps} />;
-        if (state.ui.page === "product") return <ProductDetailPage {...pageProps} />;
         if (state.ui.page === "checkout") return <CheckoutPage {...pageProps} />;
         return <OrdersPage {...pageProps} />;
       case "orderSuccess": return <OrderSuccessPage {...pageProps} />;

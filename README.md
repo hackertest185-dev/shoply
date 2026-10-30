@@ -4,7 +4,7 @@ Shoply is a React storefront backed by FastAPI, MongoDB, and Redis.
 
 ## Shopping flow
 
-1. A customer creates an account or signs in to browse the catalog.
+1. Anyone can browse the active catalog; customers sign in to save items, add them to a cart, and submit orders.
 2. An admin adds products in the Admin Dashboard. Only admins can create, change, publish, or hide products.
 3. The customer adds products to the cart and submits an order request with a WhatsApp number in international format, such as `+201234567890`.
 4. The order is recorded as `pending_contact` and `unpaid`. The admin opens the prepared WhatsApp message and, after sending it, clicks **Confirm message sent**. The customer then sees the contact status in their orders.

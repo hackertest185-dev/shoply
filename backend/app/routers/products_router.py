@@ -9,7 +9,6 @@ from app.core.database import get_db
 from app.core.config import settings
 from app.core.input_security import normalize_image
 from app.core.s3_client import upload_product_image
-from app.dependencies.auth_dependency import get_current_user
 from app.dependencies.rbac_dependency import require_admin, require_customer
 from app.schemas.product_schema import ProductCreate, ProductUpdate, ReviewCreate
 from app.services import products_service, review_service
@@ -36,9 +35,9 @@ async def list_products(
     page:         int          = Query(1, ge=1),
     limit:        int          = Query(20, ge=1, le=100),
     in_stock:     bool         = False,
-    current_user: dict = Depends(get_current_user),
     db=Depends(get_db),
 ):
+    """Public catalog: only active products are returned by the service."""
     params = {k: v for k, v in request.query_params.items()}
     products, total = await products_service.list_products(db, params)
     total_pages = max(1, -(-total // limit))
@@ -60,7 +59,7 @@ async def list_managed_products(
 
 
 @router.get("/{product_id}")
-async def get_product(product_id: str, current_user: dict = Depends(get_current_user), db=Depends(get_db)):
+async def get_product(product_id: str, db=Depends(get_db)):
     product = await products_service.get_product(db, product_id)
     if not product:
         raise HTTPException(
