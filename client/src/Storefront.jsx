@@ -10,11 +10,6 @@ const formatMoney = amount => `${Number(amount || 0).toLocaleString('en-EG', { m
 // The reference experience is a 240-frame canvas sequence. Keeping every
 // fourth frame locally gives us the same scroll-scrub feel without making the
 // storefront bundle unnecessarily heavy.
-const WATCH_SEQUENCE = Array.from({ length: 60 }, (_, index) => {
-  const sourceFrame = String(1 + index * 4).padStart(3, '0');
-  return `/watch-sequence/frame-${sourceFrame}.webp`;
-});
-
 const SAFE_IMAGE_HOSTS = new Set(['images.unsplash.com']);
 function safeImageSource(value, fallback = '') {
   if (typeof value !== 'string' || !value.trim()) return fallback;
@@ -139,22 +134,6 @@ const GlobalStyles = () => (
     .shop-hero-motion-hint::before { content: ''; width: 6px; height: 6px; border: 1px solid currentColor; border-radius: 50%; box-shadow: 0 0 0 3px rgba(246,220,174,.12); }
     .shop-motion-mobile { display: none; }
     .shop-hero:hover .shop-hero-motion-hint { opacity: 0; transform: translateY(6px); }
-    .shop-hero-scroll { position: relative; min-height: 260vh; margin: 28px 0 72px; }
-    .shop-hero-stage { position: sticky; top: 0; height: min(760px, calc(100vh - 88px)); min-height: 620px; margin: 0 !important; }
-    .shop-hero-stage::after { content: ''; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(90deg, rgba(5,10,15,.18), transparent 52%, rgba(2,6,12,.18)); z-index: 1; }
-    .shop-watch-canvas-wrap { position: absolute; inset: 0 0 0 45%; overflow: hidden; background: #05070b; }
-    .shop-watch-canvas { display: block; width: 100%; height: 100%; }
-    .shop-watch-canvas-wrap::before { content: ''; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(circle at 50% 50%, transparent 30%, rgba(0,0,0,.24) 78%, rgba(0,0,0,.62)); z-index: 1; }
-    .shop-watch-loading { position: absolute; right: 28px; bottom: 28px; z-index: 2; padding: 9px 12px; border: 1px solid rgba(223,189,137,.32); border-radius: 999px; background: rgba(5,10,15,.78); color: var(--amber-lt); font-size: 10px; font-weight: 800; letter-spacing: .15em; text-transform: uppercase; }
-    .shop-watch-caption { position: absolute; right: 34px; top: 34px; z-index: 2; max-width: 170px; color: rgba(247,241,231,.72); font-size: 10px; line-height: 1.7; letter-spacing: .2em; text-transform: uppercase; text-align: right; }
-    .shop-watch-caption strong { display: block; margin-top: 8px; color: var(--amber); font-size: 11px; letter-spacing: .14em; }
-    .shop-hero-scroll .shop-hero-content { z-index: 3; }
-    .shop-hero-scroll .shop-hero-motion-hint { z-index: 4; }
-    .shop-hero-scroll .shop-hero-photo { z-index: 2; transform: none; }
-    .shop-hero-scroll .shop-hero-photo::before, .shop-hero-scroll .shop-hero-photo::after { display: none; }
-    .shop-scroll-progress { position: absolute; left: 70px; bottom: 30px; z-index: 4; display: flex; align-items: center; gap: 11px; color: rgba(247,241,231,.55); font-size: 10px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase; }
-    .shop-scroll-progress::before { content: ''; width: 48px; height: 1px; background: linear-gradient(90deg, var(--amber), transparent); }
-    .shop-scroll-progress::after { content: ''; position: absolute; left: 0; bottom: -8px; width: 48px; height: 2px; transform-origin: left; transform: scaleX(var(--hero-scroll-progress, 0)); background: var(--amber); }
     @keyframes heroDrift { from { transform: translate3d(0,0,0) scale(1.015); } to { transform: translate3d(-7px,-9px,0) scale(1.055); } }
     .shop-hero-orbit, .shop-hero-depth-shadow, .shop-hero-float-chip { display: none; }
     .shop-hero-title { font-size: clamp(64px, 7vw, 104px) !important; line-height: .82 !important; letter-spacing: -.055em; }
@@ -214,8 +193,6 @@ const GlobalStyles = () => (
       .shop-mobile-menu button { min-height: 44px; padding: 10px 12px; text-align: left; border: 0; border-radius: 8px; background: transparent; color: var(--white); font: 600 14px var(--font-sans); cursor: pointer; }
       .shop-mobile-menu button:hover { background: var(--navy-card); color: var(--amber-lt); }
       .shop-hero { display: flex !important; flex-direction: column; min-height: 0 !important; margin: 18px 0 42px !important; perspective: 900px; }
-      .shop-hero-scroll { min-height: 220vh; margin: 18px 0 42px; }
-      .shop-hero-scroll .shop-hero-stage { position: sticky; top: 0; height: calc(100svh - 78px); min-height: 610px; margin: 0 !important; }
       .shop-hero-content { max-width: 100% !important; width: 100%; padding: 22px 26px 34px !important; }
       .shop-hero-title { font-size: clamp(55px, 13vw, 76px) !important; margin: 18px 0 20px !important; }
       .shop-hero-photo { order: -1; position: relative; inset: auto; width: 100%; height: clamp(300px, 82vw, 390px); overflow: visible; transform: none !important; transform-style: flat; will-change: auto; touch-action: pan-y; background: radial-gradient(ellipse at 50% 55%, rgba(223,189,137,.24), transparent 58%), #102723; }
@@ -230,10 +207,6 @@ const GlobalStyles = () => (
       .shop-hero-depth-shadow { display: block; position: absolute; z-index: 0; left: 17%; right: 17%; bottom: 8px; height: 26px; border-radius: 50%; background: rgba(0,0,0,.5); filter: blur(14px); animation: heroShadow 7s ease-in-out infinite alternate; }
       .shop-hero-float-chip { display: inline-flex; position: absolute; z-index: 4; right: 12px; top: 49px; padding: 10px 12px; border: 1px solid rgba(246,220,174,.55); border-radius: 100px; background: rgba(9,25,23,.84); box-shadow: 0 9px 24px rgba(0,0,0,.25); color: var(--amber-lt); font: 800 9px var(--font-sans); letter-spacing: .16em; animation: heroChipFloat 5s ease-in-out infinite alternate; pointer-events: none; }
       .shop-hero-motion-hint { display: inline-flex; right: 17px; bottom: 43px; z-index: 4; padding: 8px 10px; font-size: 9px; letter-spacing: .1em; }
-      .shop-watch-canvas-wrap { inset: 0; height: 52%; }
-      .shop-hero-scroll .shop-hero-content { order: 2; padding-top: 26px !important; background: linear-gradient(180deg, rgba(16,39,35,0), rgba(16,39,35,.98) 22%); }
-      .shop-watch-caption { top: 22px; right: 22px; max-width: 130px; font-size: 9px; }
-      .shop-scroll-progress { left: 26px; bottom: 19px; }
       .shop-motion-desktop { display: none; }
       .shop-motion-mobile { display: inline; }
       .shop-hero:hover .shop-hero-motion-hint { opacity: 1; transform: none; }
@@ -1386,86 +1359,51 @@ function HomePage({ state, dispatch, onAddToCart }) {
   const [products, setProducts]   = useState([]);
   const [categories, setCategories] = useState([]);
   const [loadingHome, setLoadingHome] = useState(true);
-  const heroSequenceSectionRef = useRef(null);
-  const heroCanvasRef = useRef(null);
-  const heroImagesRef = useRef([]);
-  const [heroSequenceReady, setHeroSequenceReady] = useState(false);
+  const heroPhotoRef = useRef(null);
+  const heroFrameRef = useRef(0);
+  const heroTouchStartRef = useRef(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    const images = WATCH_SEQUENCE.map(src => {
-      const image = new Image();
-      image.decoding = "async";
-      image.src = src;
-      return image;
+  useEffect(() => () => window.cancelAnimationFrame(heroFrameRef.current), []);
+
+  const startHeroTouch = event => {
+    if (event.pointerType === "touch") heroTouchStartRef.current = { x: event.clientX, y: event.clientY };
+  };
+
+  const moveHero = event => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const photo = heroPhotoRef.current;
+    if (!photo) return;
+    let x;
+    let y;
+    if (event.pointerType === "touch" && window.innerWidth <= 700 && heroTouchStartRef.current) {
+      x = Math.max(-1, Math.min(1, (event.clientX - heroTouchStartRef.current.x) / 70));
+      y = Math.max(-1, Math.min(1, (event.clientY - heroTouchStartRef.current.y) / 90));
+      if (Math.abs(x) < .1 && Math.abs(y) < .1) return;
+      photo.classList.add("is-interacting");
+    } else if (event.pointerType === "mouse" && window.innerWidth > 700) {
+      const bounds = event.currentTarget.getBoundingClientRect();
+      x = Math.max(-1, Math.min(1, ((event.clientX - bounds.left) / bounds.width - .5) * 2));
+      y = Math.max(-1, Math.min(1, ((event.clientY - bounds.top) / bounds.height - .5) * 2));
+    } else return;
+    window.cancelAnimationFrame(heroFrameRef.current);
+    heroFrameRef.current = window.requestAnimationFrame(() => {
+      photo.style.setProperty("--hero-x", `${x * 9}px`);
+      photo.style.setProperty("--hero-y", `${y * 7}px`);
+      photo.style.setProperty("--hero-rx", `${-y * 5}deg`);
+      photo.style.setProperty("--hero-ry", `${x * 8}deg`);
+      photo.style.setProperty("--hero-glint-x", `${70 + x * 17}%`);
+      photo.style.setProperty("--hero-glint-y", `${35 + y * 17}%`);
     });
-    Promise.all(images.map(image => new Promise(resolve => {
-      if (image.complete) return resolve();
-      image.onload = resolve;
-      image.onerror = resolve;
-    }))).then(() => {
-      if (cancelled) return;
-      heroImagesRef.current = images;
-      setHeroSequenceReady(true);
-    });
-    return () => { cancelled = true; };
-  }, []);
+  };
 
-  useEffect(() => {
-    if (!heroSequenceReady) return undefined;
-    const section = heroSequenceSectionRef.current;
-    const canvas = heroCanvasRef.current;
-    if (!section || !canvas) return undefined;
-    const context = canvas.getContext("2d");
-    let frameRequest = 0;
-    let currentFrame = -1;
-
-    const drawFrame = frameIndex => {
-      const image = heroImagesRef.current[frameIndex];
-      if (!image || !image.naturalWidth) return;
-      const bounds = canvas.getBoundingClientRect();
-      const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
-      const width = Math.max(1, Math.floor(bounds.width * pixelRatio));
-      const height = Math.max(1, Math.floor(bounds.height * pixelRatio));
-      if (canvas.width !== width || canvas.height !== height) {
-        canvas.width = width;
-        canvas.height = height;
-      }
-      context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-      context.fillStyle = "#05070b";
-      context.fillRect(0, 0, bounds.width, bounds.height);
-      const scale = Math.min(bounds.width / image.naturalWidth, bounds.height / image.naturalHeight) * 1.45;
-      const drawWidth = image.naturalWidth * scale;
-      const drawHeight = image.naturalHeight * scale;
-      context.drawImage(image, (bounds.width - drawWidth) / 2, (bounds.height - drawHeight) / 2, drawWidth, drawHeight);
-      currentFrame = frameIndex;
-    };
-
-    const updateFromScroll = () => {
-      cancelAnimationFrame(frameRequest);
-      frameRequest = requestAnimationFrame(() => {
-        const bounds = section.getBoundingClientRect();
-        const travel = Math.max(1, section.offsetHeight - window.innerHeight);
-        const progress = Math.max(0, Math.min(1, -bounds.top / travel));
-        const frameIndex = Math.round(progress * (heroImagesRef.current.length - 1));
-        if (frameIndex !== currentFrame) drawFrame(frameIndex);
-        section.style.setProperty("--hero-scroll-progress", progress.toFixed(3));
-      });
-    };
-
-    const resize = () => {
-      currentFrame = -1;
-      updateFromScroll();
-    };
-    window.addEventListener("scroll", updateFromScroll, { passive: true });
-    window.addEventListener("resize", resize);
-    updateFromScroll();
-    return () => {
-      cancelAnimationFrame(frameRequest);
-      window.removeEventListener("scroll", updateFromScroll);
-      window.removeEventListener("resize", resize);
-    };
-  }, [heroSequenceReady]);
+  const resetHero = () => {
+    window.cancelAnimationFrame(heroFrameRef.current);
+    heroTouchStartRef.current = null;
+    const photo = heroPhotoRef.current;
+    if (!photo) return;
+    photo.classList.remove("is-interacting");
+    for (const key of ["--hero-x", "--hero-y", "--hero-rx", "--hero-ry", "--hero-glint-x", "--hero-glint-y"]) photo.style.removeProperty(key);
+  };
 
   useEffect(() => {
     const load = async () => {
@@ -1493,22 +1431,22 @@ function HomePage({ state, dispatch, onAddToCart }) {
   return (
     <main className="shop-home" style={{ maxWidth: "1280px", margin: "0 auto", padding: "0 24px 80px" }}>
       {/* Hero */}
-      <section ref={heroSequenceSectionRef} className="shop-hero-scroll" aria-label="Shoply watch motion study">
-      <div className="shop-hero shop-hero-stage" style={{
+      <section className="shop-hero" style={{
         position: "relative", borderRadius: "var(--radius)", overflow: "hidden",
-        background: "#05070b",
-        border: "1px solid rgba(223,189,137,.28)", display: "flex", alignItems: "center",
+        background: "var(--navy-mid)",
+        border: "1px solid var(--navy-border)", margin: "28px 0 72px",
+        minHeight: "610px", display: "flex", alignItems: "center",
       }}>
         <div className="shop-hero-content" style={{ position: "relative", padding: "60px 70px", maxWidth: "680px" }}>
-          <div className="shop-eyebrow fade-in-up">THE SHOPLY EDIT · KINETIC STUDY</div>
+          <div className="shop-eyebrow fade-in-up">THE SHOPLY EDIT · 2026</div>
           <h1 className="shop-hero-title fade-in-up-d1" style={{
             fontFamily: "var(--font-serif)", fontSize: "clamp(64px, 7vw, 104px)",
             lineHeight: .9, margin: "30px 0 25px", fontWeight: 600,
           }}>
-            Time,<br /><em>reimagined.</em>
+            Everyday,<br /><em>beautifully</em><br />considered.
           </h1>
           <p className="fade-in-up-d2" style={{ color: "var(--muted)", fontSize: "16px", lineHeight: 1.75, marginBottom: "34px", maxWidth: "405px" }}>
-            A mechanical icon in motion. Scroll to turn the watch, inspect every polished angle, and find the piece that keeps pace with you.
+            Thoughtful finds for the spaces you make and the moments you keep. Explore the collection, then confirm your order directly with us.
           </p>
           <div className="fade-in-up-d3" style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
             <Btn size="lg" onClick={() => state.auth.isAuthenticated ? dispatch({ type: "NAVIGATE", page: "products" }) : dispatch({ type: "AUTH_MODAL", mode: "login" })} style={{ borderRadius: 100, padding: "16px 26px" }}>
@@ -1516,18 +1454,17 @@ function HomePage({ state, dispatch, onAddToCart }) {
             </Btn>
             {!state.auth.isAuthenticated && <Btn variant="outline" size="lg" style={{ borderRadius: 100, borderWidth: 1 }} onClick={() => dispatch({ type: "AUTH_MODAL", mode: "register" })}>Create account</Btn>}
           </div>
-          <div className="fade-in-up-d3" style={{ borderTop: "1px solid rgba(223,189,137,.3)", marginTop: 55, paddingTop: 16, maxWidth: 430, color: "var(--muted)", fontSize: 12, letterSpacing: ".03em" }}>SCROLL TO EXPLORE · CURATED BY THE STORE</div>
+          <div className="fade-in-up-d3" style={{ borderTop: "1px solid rgba(223,189,137,.3)", marginTop: 55, paddingTop: 16, maxWidth: 430, color: "var(--muted)", fontSize: 12, letterSpacing: ".03em" }}>CURATED BY THE STORE · ORDER VIA WHATSAPP</div>
         </div>
-        <div className="shop-hero-photo" aria-hidden="true">
-          <div className="shop-watch-canvas-wrap">
-            <canvas ref={heroCanvasRef} className="shop-watch-canvas" />
-            {!heroSequenceReady && <span className="shop-watch-loading">Loading motion study</span>}
-            <span className="shop-watch-caption">A kinetic study in precision<strong>scroll to rotate</strong></span>
+        <div className="shop-hero-photo" ref={heroPhotoRef} onPointerDown={startHeroTouch} onPointerMove={moveHero} onPointerLeave={resetHero} onPointerUp={resetHero} aria-hidden="true">
+          <span className="shop-hero-orbit" />
+          <span className="shop-hero-depth-shadow" />
+          <div className="shop-hero-photo-inner">
+            <img src="/shoply-editorial-hero.webp" alt="" width="1024" height="1536" fetchPriority="high" />
           </div>
+          <span className="shop-hero-float-chip">THE SHOPLY EDIT</span>
           <span className="shop-hero-motion-hint"><span className="shop-motion-desktop">SCROLL TO EXPLORE</span><span className="shop-motion-mobile">SWIPE TO EXPLORE</span></span>
         </div>
-        <div className="shop-scroll-progress">EXPLORE PERFECTION</div>
-      </div>
       </section>
 
       {/* Categories */}
