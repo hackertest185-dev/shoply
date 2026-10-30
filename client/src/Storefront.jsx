@@ -157,6 +157,8 @@ const GlobalStyles = () => (
     [data-reveal]:nth-child(2) { transition-delay: .09s; }
     [data-reveal]:nth-child(3) { transition-delay: .18s; }
     [data-reveal]:nth-child(4) { transition-delay: .27s; }
+    /* Homepage content must remain visible even if scroll-reveal misses its observer callback. */
+    .shop-home [data-reveal] { opacity: 1 !important; transform: none !important; }
     .shop-page { animation: fadeInUp .35s ease both; }
     .shop-filter-layout { display: flex; gap: 32px; }
     .shop-filter-aside { width: 240px; flex-shrink: 0; }
