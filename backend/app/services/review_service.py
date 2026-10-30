@@ -6,6 +6,10 @@ from app.models import review_model
 from app.services.audit_log_service import write_audit_log
 
 
+async def list_reviews(db, product_id: str, page: int = 1, limit: int = 20) -> tuple[list[dict], int]:
+    return await review_model.list_reviews(db, product_id, page, limit)
+
+
 async def create_review(db, product_id: str, customer_id: str, rating: int, body: str) -> dict:
     existing = await review_model.get_review(db, product_id, customer_id)
     if existing:
