@@ -93,6 +93,10 @@ async def _create_indexes() -> None:
     # Carts
     await db.carts.create_index("user_id", unique=True, background=True)
 
+    # One FCM registration token belongs to one current admin/browser session.
+    await db.admin_push_devices.create_index("token_hash", unique=True, background=True)
+    await db.admin_push_devices.create_index("user_id", background=True)
+
     # Refresh tokens
     await db.refresh_tokens.create_index("user_id", background=True)
     await db.refresh_tokens.create_index("expires_at", expireAfterSeconds=0, background=True)

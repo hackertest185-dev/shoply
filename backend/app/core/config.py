@@ -74,6 +74,10 @@ class Settings(BaseSettings):
     EMAIL_FROM_NAME: str = "Shoply"
     FRONTEND_URL: str = "https://shoply-adh.pages.dev"
 
+    # ── Firebase Cloud Messaging ─────────────────────────────────────────────
+    # Keep the service-account JSON only in the backend secret store.
+    FCM_SERVICE_ACCOUNT_JSON: str = ""
+
     # ── Gmail SMTP (email OTP) ───────────────────────────────────────────────
     # Use a Gmail App Password here, never the normal Gmail password.
     SMTP_HOST: str = "smtp.gmail.com"

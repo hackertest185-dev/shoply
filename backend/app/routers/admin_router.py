@@ -6,9 +6,9 @@ from pymongo import ReturnDocument
 
 from app.core.database import get_db
 from app.dependencies.rbac_dependency import require_admin
-from app.schemas.admin_schema import CompleteDeliveryRequest, ProductRejectRequest, RefundRequest, OrderAssignRequest
+from app.schemas.admin_schema import CompleteDeliveryRequest, ProductRejectRequest, RefundRequest, OrderAssignRequest, PushDeviceRequest
 from app.schemas.delivery_schema import AgentRejectRequest
-from app.services import admin_service, verification_service
+from app.services import admin_service, verification_service, push_notification_service
 from app.services.audit_log_service import write_audit_log
 from app.services.email_service import email_is_configured, send_order_email
 from datetime import datetime, timezone
@@ -21,6 +21,31 @@ def _ok(data, meta=None) -> dict:
     if meta:
         r["meta"] = meta
     return r
+
+
+@router.post("/push-devices", status_code=201)
+async def register_push_device(
+    body: PushDeviceRequest,
+    current_user: dict = Depends(require_admin),
+    db=Depends(get_db),
+):
+    """Register this authenticated admin's browser for new-order notifications."""
+    await push_notification_service.register_admin_device(
+        db, current_user["user_id"], body.token,
+    )
+    return _ok({"registered": True})
+
+
+@router.delete("/push-devices")
+async def remove_push_device(
+    body: PushDeviceRequest,
+    current_user: dict = Depends(require_admin),
+    db=Depends(get_db),
+):
+    await push_notification_service.remove_admin_device(
+        db, current_user["user_id"], body.token,
+    )
+    return _ok({"registered": False})
 
 
 @router.get("/dashboard")

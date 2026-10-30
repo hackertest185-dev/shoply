@@ -24,3 +24,8 @@ class CompleteDeliveryRequest(BaseModel):
     payment_received: Literal[True] = Field(
         ..., description="The admin confirms that the InstaPay payment was received."
     )
+
+
+class PushDeviceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    token: str = Field(..., min_length=20, max_length=4096)

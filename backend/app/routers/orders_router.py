@@ -1,14 +1,14 @@
 """routers/orders_router.py"""
 import uuid
 import re
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from bson import ObjectId
 
 from app.core.database import get_db
 from app.dependencies.rbac_dependency import require_customer, require_roles
 from app.schemas.order_schema import OrderRequest
-from app.services import cart_service, orders_service, payment_service, receipt_service
+from app.services import cart_service, orders_service, payment_service, receipt_service, push_notification_service
 from app.models import order_model
 
 router = APIRouter(tags=["Orders & Checkout"])
@@ -25,6 +25,7 @@ def _ok(data, meta=None, code=200) -> dict:
 async def request_order(
     body: OrderRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_customer),
     db=Depends(get_db),
 ):
@@ -56,6 +57,10 @@ async def request_order(
         }
         raise HTTPException(status_code=409, detail={"code": code, "message": messages.get(code, "Could not create the order.")})
     await cart_service.clear_cart(db, current_user["user_id"])
+    background_tasks.add_task(
+        push_notification_service.send_new_order_notification,
+        result["order_id"],
+    )
     return _ok(result)
 
 

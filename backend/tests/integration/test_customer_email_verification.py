@@ -237,6 +237,38 @@ async def test_admin_uses_the_same_password_then_otp_flow(auth_setup):
 
 
 @pytest.mark.asyncio
+async def test_push_device_registration_is_admin_only_and_account_scoped(auth_setup):
+    client, db, sent = auth_setup
+    admin_email = "push-owner@example.com"
+    admin_id = await db.users.insert_one({
+        "name": "Store Owner", "email": admin_email, "role": "admin",
+        "password_hash": hash_password("AdminPassword123"),
+        "is_verified": True, "status": "active", "auth_version": 1,
+    })
+    token = "web-push-registration-token-for-device-123456789"
+
+    denied = await client.post("/api/v1/admin/push-devices", json={"token": token})
+    assert denied.status_code == 401
+
+    login = await client.post("/api/v1/auth/login", json={
+        "email": admin_email, "password": "AdminPassword123",
+    })
+    session = await client.post("/api/v1/auth/verify-login-otp", json={
+        "challenge_id": login.json()["data"]["challenge_id"], "otp": sent["otp"][-1][1],
+    })
+    headers = {"Authorization": f"Bearer {session.json()['data']['access_token']}"}
+    registered = await client.post("/api/v1/admin/push-devices", json={"token": token}, headers=headers)
+    assert registered.status_code == 201
+    stored = await db.admin_push_devices.find_one({"token": token})
+    assert stored["user_id"] == str(admin_id.inserted_id)
+    assert stored["token_hash"] != token
+
+    removed = await client.request("DELETE", "/api/v1/admin/push-devices", json={"token": token}, headers=headers)
+    assert removed.status_code == 200
+    assert await db.admin_push_devices.find_one({"token": token}) is None
+
+
+@pytest.mark.asyncio
 async def test_login_challenge_locks_and_rejects_stale_account_version(auth_setup):
     client, db, sent = auth_setup
     email = "locked-buyer@example.com"

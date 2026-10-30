@@ -1,0 +1,19 @@
+{
+  "name": "Shoply",
+  "short_name": "Shoply",
+  "description": "Shop the Shoply collection and manage orders.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0a1c18",
+  "theme_color": "#0a1c18",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
