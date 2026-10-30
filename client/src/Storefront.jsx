@@ -2804,7 +2804,14 @@ function ResetPasswordPage({ dispatch, token }) {
     setLoading(true); setMessage("");
     const res = await api.auth.resetPassword({ token, new_password: password });
     setLoading(false);
-    if (res.success) { setMessage("Password reset. You can sign in now."); window.history.replaceState({}, "", "/"); window.setTimeout(() => dispatch({ type: "AUTH_MODAL", mode: "login" }), 700); }
+    if (res.success) {
+      setMessage("Password reset. You can sign in now.");
+      window.history.replaceState({}, "", "/");
+      window.setTimeout(() => {
+        dispatch({ type: "NAVIGATE", page: "home" });
+        dispatch({ type: "AUTH_MODAL", mode: "login" });
+      }, 700);
+    }
     else setMessage(res.error?.message || "This reset link is invalid or expired.");
   };
   return <main style={{ maxWidth: 520, margin: "0 auto", padding: "90px 24px 120px" }}><div className="shop-kicker">SHOPLY ACCOUNT</div><h1 className="shop-section-title" style={{ fontFamily: "var(--font-serif)", fontSize: 46 }}>Choose a new password</h1><div style={{ display: "grid", gap: 14, marginTop: 24 }}><Input label="New password" type="password" value={password} autoComplete="new-password" onChange={event => { setPassword(event.target.value); setMessage(""); }} /><PasswordStrength password={password} /><Input label="Confirm password" type="password" value={confirm} autoComplete="new-password" onChange={event => setConfirm(event.target.value)} />{message && <p style={{ color: message.startsWith("Password reset") ? "var(--success)" : "var(--danger)", fontSize: 13 }}>{message}</p>}<Btn full size="lg" onClick={submit} disabled={loading || !token}>{loading ? "Saving…" : "Set new password"}</Btn></div></main>;
