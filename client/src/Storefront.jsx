@@ -283,11 +283,12 @@ async function apiFetch(path, options = {}) {
   }
 
   //const { _skipAuth, body, method = "GET", ...rest } = options;
-  const { _skipAuth, body, method = "GET", isFormData = false, ...rest } = options;
+  const { _skipAuth, body, method = "GET", isFormData = false, headers: extraHeaders = {}, ...rest } = options;
 
   const headers = {
     "X-Request-ID": genRequestId(),
     ...(isFormData ? {} : { "Content-Type": "application/json" }),
+    ...extraHeaders,
   };
   
   // 2. استخدم أحدث توكن موجود في الذاكرة بعد الانتظار
@@ -411,6 +412,12 @@ const api = {
       create: (body) => apiFetch("/coupons", { method: "POST", body }),
       disable: (id) => apiFetch(`/coupons/${id}`, { method: "DELETE" }),
     },
+  },
+  payments: {
+    paymobStatus: () => apiFetch("/payments/paymob/status", { _skipAuth: true }),
+    paymobCheckout: (body, idempotencyKey) => apiFetch("/payments/paymob/checkout", {
+      method: "POST", body, headers: { "Idempotency-Key": idempotencyKey },
+    }),
   },
   coupons: {
     validate: (body) => apiFetch("/coupons/validate", { method: "POST", body }),
@@ -1983,6 +1990,14 @@ function CheckoutPage({ state, dispatch }) {
   const [couponCode, setCouponCode] = useState("");
   const [coupon, setCoupon] = useState(null);
   const [couponLoading, setCouponLoading] = useState(false);
+  const [startingPayment, setStartingPayment] = useState(false);
+  const [paymobEnabled, setPaymobEnabled] = useState(false);
+
+  useEffect(() => {
+    api.payments.paymobStatus().then(result => {
+      if (result.success) setPaymobEnabled(Boolean(result.data?.card_checkout_enabled));
+    });
+  }, []);
 
   const applyCoupon = async () => {
     if (!couponCode.trim()) return;
@@ -2015,11 +2030,41 @@ function CheckoutPage({ state, dispatch }) {
     dispatch({ type: "NAVIGATE", page: "orderSuccess", params: { order: res.data } });
   };
 
+  const payByCard = async () => {
+    const number = whatsappNumber.replace(/[\s()-]/g, "");
+    if (!/^\+[1-9]\d{7,14}$/.test(number)) {
+      setError("Enter your WhatsApp number with country code, for example +201234567890.");
+      return;
+    }
+    if (cart.items.length === 0) { setError("Your cart is empty."); return; }
+    setStartingPayment(true);
+    setError("");
+    const idempotencyKey = `paymob-${window.crypto.randomUUID()}`;
+    const res = await api.payments.paymobCheckout({
+      whatsapp_number: number,
+      ...(coupon?.code ? { coupon_code: coupon.code } : {}),
+    }, idempotencyKey);
+    setStartingPayment(false);
+    if (!res.success) {
+      setError(res.error?.message || res.detail?.message || "Could not start secure card checkout.");
+      return;
+    }
+    try {
+      const checkout = new URL(res.data.checkout_url);
+      if (checkout.protocol !== "https:" || !["accept.paymob.com", "eg.checkout.paymob.com"].includes(checkout.hostname)) {
+        throw new Error("Invalid checkout destination");
+      }
+      window.location.assign(checkout.toString());
+    } catch {
+      setError("The secure payment page could not be opened. Please contact the store.");
+    }
+  };
+
   return (
     <main style={{ maxWidth: 760, margin: "0 auto", padding: "48px 24px 80px" }}>
       <div className="shop-kicker">ONE STEP FROM YOUR NEW FIND</div>
       <h1 className="shop-section-title" style={{ fontFamily: "var(--font-serif)", fontSize: 50, marginBottom: 14 }}>Place your order</h1>
-      <p style={{ color: "var(--muted)", marginBottom: 28 }}>Share your WhatsApp number. The store admin will contact you to confirm delivery and payment.</p>
+      <p style={{ color: "var(--muted)", marginBottom: 28 }}>Choose a secure card payment with Paymob or send an order request and arrange payment on WhatsApp.</p>
       <div className="shop-card-panel shop-form-surface" style={{ background: "var(--navy-card)", border: "1px solid var(--navy-border)", borderRadius: "var(--radius)", padding: 28 }}>
         <h2 style={{ fontFamily: "var(--font-serif)", fontSize: 22, marginBottom: 18 }}>Order summary</h2>
         {cart.items.map(item => (
@@ -2033,9 +2078,13 @@ function CheckoutPage({ state, dispatch }) {
         <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0 24px", fontWeight: 700, borderTop: "1px solid var(--navy-border)" }}><span>Total</span><span style={{ color: "var(--amber)", fontFamily: "var(--font-mono)" }}>{formatMoney(coupon?.total ?? cart.summary.total)}</span></div>
         <Input label="WhatsApp number with country code" type="tel" value={whatsappNumber} onChange={e => setWhatsappNumber(e.target.value)} placeholder="+201234567890" required />
         <div style={{ display: "flex", gap: 8, alignItems: "flex-end", marginTop: 4 }}><div style={{ flex: 1 }}><Input label="Coupon code (optional)" value={couponCode} onChange={e => { setCouponCode(e.target.value.toUpperCase()); setCoupon(null); }} placeholder="WELCOME10" /></div><Btn variant="outline" onClick={applyCoupon} disabled={couponLoading}>{couponLoading ? "…" : "Apply"}</Btn></div>
-        <p style={{ color: "var(--muted)", fontSize: 12, margin: "8px 0 18px" }}>No payment is taken now. The admin will message this number to arrange your order.</p>
+        <p style={{ color: "var(--muted)", fontSize: 12, margin: "8px 0 18px" }}>Card details are entered on Paymob’s secure checkout and are never stored by Shoply. The WhatsApp option does not take payment now.</p>
         {error && <p style={{ color: "var(--danger)", fontSize: 13, marginBottom: 14 }}>{error}</p>}
-        <Btn full size="lg" onClick={placeOrder} disabled={loading || cart.items.length === 0}>{loading ? "Submitting…" : "Submit Order Request"}</Btn>
+        {paymobEnabled && <>
+          <Btn full size="lg" onClick={payByCard} disabled={startingPayment || loading || cart.items.length === 0}>{startingPayment ? "Opening secure checkout…" : "Pay securely by Visa / card · Paymob"}</Btn>
+          <div style={{ textAlign: "center", color: "var(--muted2)", fontSize: 12, margin: "14px 0" }}>OR</div>
+        </>}
+        <Btn full variant="outline" onClick={placeOrder} disabled={loading || startingPayment || cart.items.length === 0}>{loading ? "Submitting…" : "Request order via WhatsApp"}</Btn>
       </div>
     </main>
   );
@@ -2435,9 +2484,10 @@ function AdminOrderRequests({ onDelivered }) {
       "المنتجات:",
       items || "- لا توجد تفاصيل",
       `الإجمالي: ${formatMoney(order.total || 0)}`,
-      "طريقة الدفع: InstaPay",
-      "رقم InstaPay: 01030888493",
-      "من فضلك أرسل تأكيد الدفع على نفس المحادثة.",
+      order.payment_method === "paymob"
+        ? "طريقة الدفع: بطاقة عبر Paymob (تم التأكيد إلكترونيًا)."
+        : "طريقة الدفع: InstaPay",
+      ...(order.payment_method === "paymob" ? [] : ["رقم InstaPay: 01030888493", "من فضلك أرسل تأكيد الدفع على نفس المحادثة."]),
     ].join("\n");
   };
 
@@ -2503,7 +2553,7 @@ function AdminOrderRequests({ onDelivered }) {
               <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" }}>
                 <a href={`https://wa.me/${order.whatsapp_number?.replace(/\D/g, "")}?text=${encodeURIComponent(buildWhatsappMessage(order))}`} target="_blank" rel="noopener noreferrer" style={{ color: "#0a0f1e", background: "var(--success)", borderRadius: 8, padding: "10px 14px", textDecoration: "none", fontWeight: 700, fontSize: 13 }}>Open WhatsApp</a>
                 {order.contact_status !== "contacted" && <Btn size="sm" variant="outline" disabled={contactingId === order.id} onClick={() => confirmContact(order.id)}>{contactingId === order.id ? "Saving..." : "Confirm message sent"}</Btn>}
-                {order.contact_status === "contacted" && <Btn size="sm" onClick={() => { setDeliveryTarget(order); setPaymentReceived(false); }}>Mark delivered</Btn>}
+                {order.contact_status === "contacted" && <Btn size="sm" onClick={() => { setDeliveryTarget(order); setPaymentReceived(order.payment_status === "paid"); }}>Mark delivered</Btn>}
               </div>
             </div>
             <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 12 }}>
@@ -2516,12 +2566,16 @@ function AdminOrderRequests({ onDelivered }) {
       </div>}
       <Modal isOpen={Boolean(deliveryTarget)} onClose={() => { if (!savingDelivery) setDeliveryTarget(null); }} title="Complete delivery">
         <p style={{ color: "var(--muted)", fontSize: 14, lineHeight: 1.6, marginBottom: 18 }}>
-          Order #{deliveryTarget?.id?.slice(-8)} · {formatMoney(deliveryTarget?.total)}. This will mark the order as paid and delivered, add it to sales, and make the customer's PDF receipt available.
+          Order #{deliveryTarget?.id?.slice(-8)} · {formatMoney(deliveryTarget?.total)}. This will mark the order as delivered, add it to sales, and make the customer's PDF receipt available.
         </p>
-        <label style={{ display: "flex", alignItems: "flex-start", gap: 10, fontSize: 13, lineHeight: 1.5, cursor: "pointer", marginBottom: 20 }}>
-          <input type="checkbox" checked={paymentReceived} onChange={event => setPaymentReceived(event.target.checked)} style={{ marginTop: 3, accentColor: "var(--amber)" }} />
-          I confirm the InstaPay payment was received and the order was delivered to the customer.
-        </label>
+        {deliveryTarget?.payment_status === "paid" ? (
+          <p style={{ color: "var(--success)", fontSize: 13, marginBottom: 20 }}>✓ Paymob confirmed this payment automatically.</p>
+        ) : (
+          <label style={{ display: "flex", alignItems: "flex-start", gap: 10, fontSize: 13, lineHeight: 1.5, cursor: "pointer", marginBottom: 20 }}>
+            <input type="checkbox" checked={paymentReceived} onChange={event => setPaymentReceived(event.target.checked)} style={{ marginTop: 3, accentColor: "var(--amber)" }} />
+            I confirm the InstaPay payment was received and the order was delivered to the customer.
+          </label>
+        )}
         <Btn full disabled={!paymentReceived || savingDelivery} onClick={finishDelivery}>{savingDelivery ? "Saving..." : "Confirm delivery"}</Btn>
       </Modal>
     </section>
@@ -2778,6 +2832,12 @@ export default function Storefront() {
 
   useEffect(() => {
     const query = new URLSearchParams(window.location.search);
+    if (query.get("payment") === "paymob" && !state.auth.isLoading) {
+      window.history.replaceState({}, "", window.location.pathname);
+      dispatch({ type: "NAVIGATE", page: "orders" });
+      dispatch({ type: "TOAST", toast: { type: "success", title: "Payment submitted", message: "We’re confirming the payment with Paymob. Check your orders in a moment." } });
+      return;
+    }
     if (query.get("admin_orders") !== "1" || state.auth.isLoading) return;
     window.history.replaceState({}, "", window.location.pathname);
     if (state.auth.isAuthenticated && state.auth.user?.role === "admin") {

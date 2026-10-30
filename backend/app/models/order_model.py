@@ -13,6 +13,10 @@ def _serialize(doc: dict) -> dict:
     doc.pop("proof_of_delivery_key", None)
     doc.pop("proof_of_delivery_url", None)
     doc.pop("payment_intent_id", None)
+    doc.pop("paymob_checkout_url", None)
+    doc.pop("paymob_intention_id", None)
+    doc.pop("paymob_reference", None)
+    doc.pop("paymob_order_id", None)
     if "customer_id" in doc:
         doc["customer_id"] = str(doc["customer_id"])
     if "delivery_id" in doc and doc["delivery_id"]:

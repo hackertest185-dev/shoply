@@ -183,20 +183,25 @@ async def complete_delivery(
     if not ObjectId.is_valid(order_id):
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
     now = datetime.now(timezone.utc)
+    existing_order = await db.orders.find_one({"_id": ObjectId(order_id)})
+    if not existing_order:
+        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
+    payment_was_confirmed = existing_order.get("payment_status") == "paid"
+    payment_method = existing_order.get("payment_method") if payment_was_confirmed else "instapay"
     order = await db.orders.find_one_and_update(
         {
             "_id": ObjectId(order_id),
             "status": "pending_contact",
             "delivery_status": "awaiting_confirmation",
             "contact_status": "contacted",
-            "payment_status": "unpaid",
+            "payment_status": existing_order.get("payment_status", "unpaid"),
         },
         {"$set": {
             "status": "delivered",
             "delivery_status": "delivered",
             "payment_status": "paid",
-            "payment_method": "instapay",
-            "payment_confirmed_at": now,
+            "payment_method": payment_method,
+            **({} if payment_was_confirmed else {"payment_confirmed_at": now}),
             "delivered_at": now,
             "delivered_by": current_user["user_id"],
             "updated_at": now,
@@ -208,11 +213,11 @@ async def complete_delivery(
         raise HTTPException(
             status_code=409 if exists else 404,
             detail={"code": "CONFLICT" if exists else "NOT_FOUND",
-                    "message": "Only contacted, unpaid requests can be marked delivered."},
+                    "message": "Only contacted, awaiting-delivery requests can be completed."},
         )
     await write_audit_log(
         db, current_user["user_id"], "admin", "order_delivered",
-        "orders", order_id, {"total": order.get("total"), "payment_method": "instapay"},
+        "orders", order_id, {"total": order.get("total"), "payment_method": payment_method},
         request.client.host if request.client else None,
     )
     customer = await db.users.find_one({"_id": order.get("customer_id")}, {"email": 1})

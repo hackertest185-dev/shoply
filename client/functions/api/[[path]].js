@@ -19,7 +19,7 @@ export async function onRequest(context) {
   const headers = new Headers();
   // Forward only headers required by the API.  In particular, never forward
   // client-controlled proxy headers that could affect rate limiting or logs.
-  for (const name of ["accept", "authorization", "content-type", "cookie", "origin", "referer", "x-request-id"]) {
+  for (const name of ["accept", "authorization", "content-type", "cookie", "origin", "referer", "x-request-id", "idempotency-key"]) {
     const value = context.request.headers.get(name);
     if (value) headers.set(name, value);
   }

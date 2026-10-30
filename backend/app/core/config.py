@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "production"  # production | staging | development
     ENABLE_LEGACY_DELIVERY: bool = False
     ENABLE_ONLINE_PAYMENTS: bool = False
+    PAYMOB_SECRET_KEY: str = ""
+    PAYMOB_PUBLIC_KEY: str = ""
+    PAYMOB_CARD_INTEGRATION_ID: int = 0
+    PAYMOB_HMAC_SECRET: str = ""
+    PAYMOB_API_BASE_URL: str = "https://accept.paymob.com"
+    PAYMOB_CHECKOUT_URL: str = "https://eg.checkout.paymob.com/"
 
     # ── Server ───────────────────────────────────────────────────────────────
     PORT: int = 8000
@@ -56,7 +62,7 @@ class Settings(BaseSettings):
     DELIVERY_DOCUMENT_MAX_BYTES: int = 10 * 1024 * 1024
     DELIVERY_PROOF_MAX_BYTES: int = 15 * 1024 * 1024
 
-    # ── Stripe ────────────────────────────────────────────────────────────────
+    # ── Legacy Stripe (unused by the storefront) ──────────────────────────────
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
 
@@ -117,6 +123,26 @@ class Settings(BaseSettings):
             raise RuntimeError(
                 "Missing required production settings: " + ", ".join(missing)
             )
+        if self.ENABLE_ONLINE_PAYMENTS:
+            paymob_required = {
+                "PAYMOB_SECRET_KEY": self.PAYMOB_SECRET_KEY,
+                "PAYMOB_PUBLIC_KEY": self.PAYMOB_PUBLIC_KEY,
+                "PAYMOB_HMAC_SECRET": self.PAYMOB_HMAC_SECRET,
+                "PAYMOB_CARD_INTEGRATION_ID": self.PAYMOB_CARD_INTEGRATION_ID,
+            }
+            missing_paymob = [name for name, value in paymob_required.items() if not str(value).strip() or value == 0]
+            if missing_paymob:
+                raise RuntimeError(
+                    "Online payments require configured Paymob credentials: "
+                    + ", ".join(missing_paymob)
+                )
+            for name, value in (
+                ("PAYMOB_API_BASE_URL", self.PAYMOB_API_BASE_URL),
+                ("PAYMOB_CHECKOUT_URL", self.PAYMOB_CHECKOUT_URL),
+            ):
+                parsed = urlparse(value)
+                if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+                    raise RuntimeError(f"{name} must be a valid HTTPS URL.")
         if self.DEBUG:
             raise RuntimeError("DEBUG must be false in production or staging.")
         if (
