@@ -1754,9 +1754,10 @@ function ProductReviews({ productId, state, dispatch }) {
       dispatch({ type: "AUTH_MODAL", mode: "login" });
       return;
     }
-    if (!body.trim()) { setMessage("Write a short review first."); return; }
+    const reviewBody = body.trim();
+    if (reviewBody.length < 10) { setMessage("Please write at least 10 characters for your review."); return; }
     setSaving(true); setMessage("");
-    const res = await api.products.reviews.create(productId, { rating, body: body.trim() });
+    const res = await api.products.reviews.create(productId, { rating, body: reviewBody });
     setSaving(false);
     if (!res.success) { setMessage(res.error?.message || "Could not save your review."); return; }
     setBody("");

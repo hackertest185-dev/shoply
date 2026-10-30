@@ -106,6 +106,13 @@ async def create_product_review(
         review = await review_service.create_review(
             db, product_id, current_user["user_id"], body.rating, body.body
         )
+    except DuplicateKeyError:
+        # The unique database index is the final guard if two requests race
+        # after the service's existing-review lookup.
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "REVIEW_EXISTS", "message": "You already reviewed this product."},
+        )
     except ValueError as exc:
         if str(exc) == "REVIEW_EXISTS":
             raise HTTPException(

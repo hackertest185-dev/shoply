@@ -32,9 +32,18 @@ async def create_review(
         "created_at": now,
         "updated_at": now,
     }
-    await db.reviews.insert_one(data)
-    await _recompute_rating(db, product_id)
-    return _serialize(data.copy())
+    result = await db.reviews.insert_one(data)
+    # Build the response from the acknowledged insert id instead of relying on
+    # a driver mutating the submitted dictionary in place.
+    data["_id"] = result.inserted_id
+    try:
+        await _recompute_rating(db, product_id)
+    except Exception:
+        # The review itself is already persisted. Do not report a failed
+        # submission just because the product's cached aggregate needs repair.
+        import logging
+        logging.getLogger("reviews").exception("Could not refresh product rating after review insert")
+    return _serialize(data)
 
 
 async def list_reviews(
